@@ -9,8 +9,13 @@ DTA GPIO6
 WCK GPIO7
 
 By default it is configured as a USB MIDI DEVICE.
+
 In ArduinoIDE tools:
-PSRAM: OPI PSRAM
-Partition: select one with the most available SPDIFF
-USB MODE: TINY USB
+
+- PSRAM: OPI PSRAM
+
+- Partition: select one with the most available SPDIFF
+
+- USB MODE: TINY USB
+
 note that core debug level higher than info will probably block USB functionality. 
