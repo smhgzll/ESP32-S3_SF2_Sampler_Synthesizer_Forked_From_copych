@@ -112,7 +112,7 @@ class I2S_Audio {
         
     
     // a few more get functions
-    inline int                  getBufSizeBytes()                 { return WHOLE_SAMPLE_BYTES; }
+    inline int                  getBufSizeBytes()                 { return _buffer_len * WHOLE_SAMPLE_BYTES; }
     inline int                  getBufLenSmp()                    { return _buffer_len; }
     inline int                  getChanNum()                      { return _channel_num; }
     inline int                  getReadSamplesRemain()            { return _read_remain_smp; }
