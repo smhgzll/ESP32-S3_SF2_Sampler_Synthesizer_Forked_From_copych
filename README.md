@@ -14,7 +14,8 @@ The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP3
 
 - **SoundFont 2 (SF2) support**: Load and play SF2 sample banks.
 - **USB MIDI device**: Connect directly to a computer or MIDI host via USB.
-- **Audio effects**: Reverb, chorus (delay is coming)
+- **MIDI controlled**: Supports bank/program change, sustain, common CC's as well as GM reset with drums on 10'th channel, etc.
+- **Audio effects**: Reverb (CC#91), chorus (CC#93), delay (CC#95)
 - **External DAC support**: Compatible with PCM5102 and similar DACs.
 - **Optimized for ESP32-S3**: Takes advantage of the enhanced PSRAM and memory architecture.
 - **Simple hardware connections**: Minimal wiring required.
