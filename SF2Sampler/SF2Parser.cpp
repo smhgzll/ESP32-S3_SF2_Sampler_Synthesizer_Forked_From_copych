@@ -13,6 +13,9 @@ static float centsToHz(int cents) {
     return 8.176f * powf(2.0f, cents * 8.3333333e-04f); // cents → Hz
 }
 
+inline float dB_to_linear(float dB) {
+    return exp2f(dB * 0.050025f);  // ≈ dB / 20 * log2(10)
+}
 //struct PHDR { char name[20]; uint16_t preset, bank, bagIndex; uint32_t dummy[5]; };
 struct __attribute__((packed)) PHDR {
     char name[20];
@@ -54,10 +57,13 @@ void decodeGeneratorAmount(Generator& gen, uint16_t raw) {
 }
 
 
-SF2Parser::SF2Parser(const char* path) : filepath(path) {}
+SF2Parser::SF2Parser(const char* path, fs::FS* fs) : filepath(path), filesystem(fs) {}
 
 bool SF2Parser::parse() {
-    file = LittleFS.open(filepath, "r");
+    clear();
+    //file = LittleFS.open(filepath, "r");
+    file = filesystem->open(filepath, "r");
+
     if (!file){ 
         ESP_LOGE(TAG, "Error: File not found");
         return false;
@@ -409,7 +415,7 @@ Zone* SF2Parser::getZoneForNote(uint8_t note, uint8_t velocity, uint16_t bank, u
                     applyGenerators(inst.globalGenerators, result);
                     applyGenerators(izone.generators, result);
 
-                    ESP_LOGI(TAG, "Found sample for note=%u velocity=%u: %s", note, velocity, result.sample->name);
+                    ESP_LOGD(TAG, "Found sample for note=%u velocity=%u: %s", note, velocity, result.sample->name);
                     return &result;
                 }
             }
@@ -499,10 +505,14 @@ void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) 
             case GeneratorOperator::ChorusEffectsSend:
                 zone.chorusSend = val * 0.001f;
                 break;
+
             default:
                 break;
         }
     }
+    if (!zone.chorusSend) {zone.chorusSend = 1.0f; }
+    if (!zone.reverbSend) {zone.reverbSend = 1.0f; }
+
 }
 
 
@@ -625,6 +635,23 @@ bool SF2Parser::loadSampleDataToMemory() {
     }
 
     return true;
+}
+
+void SF2Parser::clear() {
+    for (auto& sample : samples) {
+        if (sample.data) {
+            heap_caps_aligned_free(sample.data);
+            sample.data = nullptr;
+            sample.dataSize = 0;
+        }
+    }
+
+    samples.clear();
+    presets.clear();
+    instruments.clear();
+    zones.clear();
+    sampleMap.clear();
+    startPosMap.clear();
 }
 
 bool SF2Parser::hasPreset(uint16_t bank, uint16_t program) const {

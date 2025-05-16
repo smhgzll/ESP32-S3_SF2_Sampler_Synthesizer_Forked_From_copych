@@ -60,6 +60,7 @@ struct Zone {    // --- Обязательные параметры ---
     float pan = 0.0f;          // Pan (-1.0–1.0)
     float modDecayTime = -0.1f;
     float modSustainLevel = 1.0f;
+    float attenuation = 1.0f;
     
     // --- Фильтр ---
     float filterFc = 13500.0f; // InitialFilterFc (частота среза)
@@ -97,13 +98,14 @@ struct SF2Preset {
 
 class SF2Parser {
 public:
-    SF2Parser(const char* path);
+    SF2Parser(const char* path, fs::FS* fs = &LittleFS);
     bool parse();
     std::vector<SampleHeader>& getSamples();
     Zone* getZoneForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program);
     std::vector<SF2Preset> & getPresets() { return presets; } 
     void dumpPresetStructure() ;
     bool hasPreset(uint16_t bank, uint16_t program) const ;
+    void clear();
 
 private:
     bool parseHeaderChunks();
@@ -116,9 +118,11 @@ private:
     uint32_t hashSampleName(const char* name) ;
     bool loadSampleDataToMemory();
     void applyGenerators(const std::vector<Generator>& gens, Zone& zone) ;
-    
+
     File file;
     String filepath;
+    
+    fs::FS* filesystem;
     std::vector<SampleHeader> samples;
     std::vector<Zone> zones; 
     std::vector<SF2Preset> presets;

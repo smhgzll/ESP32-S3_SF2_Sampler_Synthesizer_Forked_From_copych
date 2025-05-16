@@ -7,27 +7,64 @@
 #define   SAMPLE_RATE           44100
 
 // ===================== SYNTHESIZER ===============================================================================
-#define MAX_VOICES 25
+#define MAX_VOICES 16
 #define MAX_VOICES_PER_NOTE 2
 #define PITCH_BEND_CENTER 8192
+static const char* SF2_PATH = "/"; 
 
-// ===================== PINS ======================================================================================
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-// ESP32-S3 based boards:
+// ===================== I2S PINS ======================================================================================
 #define I2S_BCLK_PIN    5       // I2S BIT CLOCK pin (BCL BCK CLK)
 #define I2S_DOUT_PIN    6       // MCU Data Out: connect to periph. DATA IN (DIN D DAT)
 #define I2S_WCLK_PIN    7       // I2S WORD CLOCK pin (WCK WCL LCK)
 #define I2S_DIN_PIN     15      // MCU Data In: connect to periph. DATA OUT (DOUT D SD)
-#elif defined(CONFIG_IDF_TARGET_ESP32)
-// ESP32 based boards:
-#define I2S_BCLK_PIN    5       // I2S BIT CLOCK pin (BCL BCK CLK)
-#define I2S_DOUT_PIN    18      // MCU Data Out: connect to periph. DATA IN (DIN D DAT)
-#define I2S_WCLK_PIN    19      // I2S WORD CLOCK pin (WCK WCL LCK)
-#define I2S_DIN_PIN     23      // MCU Data In: connect to periph. DATA OUT (DOUT D SD)
-#endif
+
+// ===================== SD MMC PINS ================================================================================
+// ESP32S3 allows almost any GPIOs for any particular needs
+#define SDMMC_CMD 38
+#define SDMMC_CLK 39
+#define SDMMC_D0  10
+#define SDMMC_D1  11
+#define SDMMC_D2  12
+#define SDMMC_D3  13
+
+// ===================== OLED DISPLAY PINS ==========================================================================
+#define DISPLAY_SDA 8 // SDA GPIO
+#define DISPLAY_SCL 9 // SCL GPIO
+
+// ===================== OLED DISPLAY CONFIG ========================================================================
+#define DISPLAY_CONTROLLER SH1106
+// #define DISPLAY_CONTROLLER SSD1306
+
+#define DISPLAY_W 128
+#define DISPLAY_H 64
+#define DISPLAY_ROTATE 0 // can be 0, 90, 180 or 270
 
 // ===================== RGB LED ====================================================================================
 // #define ENABLE_RGB_LED
 // #define FASTLED_INTERNAL                  // remove annoying pragma messages
 
 
+
+
+
+
+
+
+
+
+// !!!!!!!!!!!!!=======  DO NOT CHANGE  =======!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// U8G2 CONSTRUCTOR MACROS
+#if (DISPLAY_ROTATE==180)
+  #define U8_ROTATE U8G2_R2
+#elseif (DISPLAY_ROTATE==90)
+  #define U8_ROTATE U8G2_R1
+#elseif (DISPLAY_ROTATE==270)
+  #define U8_ROTATE U8G2_R3
+#else
+  #define U8_ROTATE U8G2_R0
+#endif
+
+#define W_H_DIV X
+#define _U8_CONCAT(ctrl, w, div, h) U8G2_ ## ctrl ## _ ## w ## div ## h ## _NONAME_F_HW_I2C
+#define U8_CONCAT(ctrl, w, div, h) _U8_CONCAT(ctrl, w, div, h)
+#define U8_OBJECT U8_CONCAT(DISPLAY_CONTROLLER, DISPLAY_W, W_H_DIV, DISPLAY_H)

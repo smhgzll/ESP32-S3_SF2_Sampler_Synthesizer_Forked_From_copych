@@ -2,6 +2,9 @@
 #include "misc.h"
 static const char* TAG = "Voice";
 
+inline float velocityToGain(uint32_t velocity) {
+    return velocity * velocity * DIV_127 * DIV_127;  // square = common choice
+}
 
 void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHeader* s_, Zone* z_,  ChannelState* ch) {
     modVolume    = &ch->volume;
@@ -17,11 +20,12 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
     channel = channel_;
     sample   = s_;
     zone     = z_;
-    sustainHeld = false;
     forward  = true;
     phase = 0.0f;
     exclusiveClass = z_->exclusiveClass;
-
+    noteHeld = true;
+    
+    velocityVolume = velocityToGain(velocity) * z_->attenuation;
     data = reinterpret_cast<int16_t*>(__builtin_assume_aligned(sample->data, 4));
     int rootKey = (z_->rootKey >= 0) ? z_->rootKey : s_->originalPitch;
     float semi = (note_ - rootKey) + (s_->pitchCorrection * 0.01f) + z_->coarseTune + z_->fineTune;
@@ -46,7 +50,8 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
             currentPhaseIncrement = targetPhaseIncrement;
         }
     }
-    setFXSend(z_->reverbSend * ch->reverbSend, z_->chorusSend * ch->chorusSend);
+    reverbAmount = z_->reverbSend * ch->reverbSend;
+    chorusAmount =  z_->chorusSend * ch->chorusSend;
     
     updatePan();
 
@@ -74,8 +79,9 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
 
     active = true;
 
-    ESP_LOGI(TAG, "ch=%d note=%d attack=%.5f hold=%.5f decay=%.5f sustain=%.3f release=%.5f loopStart=%u loopEnd=%u loopType=%d",
+    ESP_LOGD(TAG, "ch=%d note=%d attack=%.5f hold=%.5f decay=%.5f sustain=%.3f release=%.5f loopStart=%u loopEnd=%u loopType=%d",
         channel_, note_, z_->attackTime, z_->holdTime, z_->decayTime, z_->sustainLevel, z_->releaseTime, loopStart, loopEnd, loopType);
+    ESP_LOGI(TAG, "ch=%d reverb=%.5f chorus=%.5f", channel, reverbAmount, chorusAmount);
 }
 
 
@@ -91,6 +97,7 @@ void Voice::kill() {
 }
 
 void Voice::die() {
+    noteHeld = false;
     ampEnv.end(Adsr::END_FAST);
 }
 
@@ -106,7 +113,6 @@ float Voice::nextSample() {
     }
     updatePitch();
     float vol = (*modVolume) * (*modExpression);
-    bool sustain = modSustain && *modSustain;
 
     float WORD_ALIGNED_ATTR s0, s1, out;
 
@@ -197,6 +203,12 @@ float Voice::nextSample() {
     return out * env * velocityVolume;
 }
 
+void Voice::renderBlock(float* block) {
+    for (uint32_t i = 0; i < DMA_BUFFER_LEN; i++) {
+        block[i] = nextSample() ;
+    }
+}
+
 void Voice::updateScore() {
     if (!active || !sample) {
         score = 0.0f;
@@ -240,7 +252,6 @@ void Voice::updatePortamento() {
 
 void Voice::init() {
     active = false;
-    sustainHeld = false;
     panL = 1.0f;
     panR = 1.0f;
     velocityVolume = 1.0f;

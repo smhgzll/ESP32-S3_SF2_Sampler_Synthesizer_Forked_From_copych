@@ -14,8 +14,8 @@
 #define SHAPER_LOOKUP_COEF    ((float)TABLE_SIZE / SHAPER_LOOKUP_MAX)
 #define TWOPI                 6.2831853f
 #define ONE_DIV_TWOPI         0.1591549f 
-#define ONE_DIV_32768 (1.0f / 32768.0f)
-#define ONE_DIV_127 (1.0f / 127.0f)
+#define ONE_DIV_32768         (1.0f / 32768.0f)
+#define ONE_DIV_127           (1.0f / 127.0f)
 
 // ===================== MISC  ======================================================================================
 const float DIV_SAMPLE_RATE     = (1.0f/(float)SAMPLE_RATE);
@@ -26,10 +26,9 @@ const float MIDI_NORM           = (1.0f / 127.0f);
 const float DIV_128             = (1.0f / 128.0f);
 const float DIV_8192            = (1.0f / 8192.0f);
 const float TWO_DIV_16383       = (2.0f / 16383.0f);
-const float MS_SAMPLE_RATE = (float)SAMPLE_RATE * 0.001f;
-const float DIV_MS_SAMPLE_RATE = 1.0f/(float)(MS_SAMPLE_RATE);
-const float SAMPLES_PER_MICROS = (float)SAMPLE_RATE * 0.000001f;
-
+const float MS_SAMPLE_RATE      = (float)SAMPLE_RATE * 0.001f;
+const float DIV_MS_SAMPLE_RATE  = 1.0f / (float)(MS_SAMPLE_RATE);
+const float SAMPLES_PER_MICROS  = (float)SAMPLE_RATE * 0.000001f;
 
 // 1.0594630943592952645618252949463 // is a 12th root of 2 (pitch increase per semitone)
 // 1.05952207969042122905182367802396 // stretched tuning (plus 60 cents per 7 octaves)
@@ -59,13 +58,10 @@ static __attribute__((always_inline)) inline float fast_pow(float a, float b) {
 static __attribute__((always_inline)) inline float fast_semitones2speed(float semitones) {
   return fast_pow(2.0f, semitones * 0.08333333f);
 }
-
-static __attribute__((always_inline)) inline float fclamp(float in, float min, float max){
-  return fmin(fmax(in, min), max);
-}
+ 
 
 
-// multiply by a reciprocal works almost 4 times faster than a float division though it can provide less accuracy
+// multiply by a reciprocal works almost faster than a float division though it can provide less accuracy
 
 static __attribute__((always_inline)) inline float one_div(float a) {
     float result;
@@ -87,7 +83,7 @@ static __attribute__((always_inline)) inline float one_div(float a) {
 }
 
 
-// this float division works 3.5 times faster compared to the "/" operator.. dunno why
+// this float division works faster compared to the "/" operator.. dunno why
 static __attribute__((always_inline)) inline float fdiv(float a, float b) {
     float result;
     asm volatile (
@@ -124,8 +120,7 @@ static __attribute__((always_inline)) inline float fdiv(float a, float b) {
     return result;
 }
 
-inline static int strpos(char *hay, char *needle, int offset)
-{
+inline static int strpos(char *hay, char *needle, int offset) {
    char haystack[strlen(hay)];
    strncpy(haystack, hay+offset, strlen(hay)-offset);
    char *p = strstr(haystack, needle);
@@ -134,26 +129,26 @@ inline static int strpos(char *hay, char *needle, int offset)
    return -1;
 }
 
-
-
 static const float sin_tbl[TABLE_SIZE+1] = {
   0.000000000f,   0.195090322f,  0.382683432f,  0.555570233f,  0.707106781f,  0.831469612f,  0.923879533f,  0.980785280f,
   1.000000000f,   0.980785280f,  0.923879533f,  0.831469612f,  0.707106781f,  0.555570233f,  0.382683432f,  0.195090322f, 
   0.000000000f,  -0.195090322f, -0.382683432f, -0.555570233f, -0.707106781f, -0.831469612f, -0.923879533f, -0.980785280f, 
-  -1.000000000f, -0.980785280f, -0.923879533f, -0.831469612f, -0.707106781f, -0.555570233f, -0.382683432f, -0.195090322f, 0.000000000f };
+  -1.000000000f, -0.980785280f, -0.923879533f, -0.831469612f, -0.707106781f, -0.555570233f, -0.382683432f, -0.195090322f, 0.000000000f 
+};
 
 static const float shaper_tbl[TABLE_SIZE+1] {
   0.000000000f, 0.154990730f, 0.302709729f, 0.437188785f, 0.554599722f, 0.653423588f, 0.734071520f, 0.798242755f, 
   0.848283640f, 0.886695149f, 0.915824544f, 0.937712339f, 0.954045260f, 0.966170173f, 0.975136698f, 0.981748725f, 
   0.986614298f, 0.990189189f, 0.992812795f, 0.994736652f, 0.996146531f, 0.997179283f, 0.997935538f, 0.998489189f, 
-  0.998894443f, 0.999191037f, 0.999408086f, 0.999566912f, 0.999683128f, 0.999768161f, 0.999830378f, 0.999875899f , 0.999909204f };
+  0.998894443f, 0.999191037f, 0.999408086f, 0.999566912f, 0.999683128f, 0.999768161f, 0.999830378f, 0.999875899f , 0.999909204f 
+};
 
 static const float exp_tbl[TABLE_SIZE+1] {
   1.000000000f, 0.897423378f, 0.804994137f, 0.721708450f, 0.646661790f, 0.579039113f, 0.518106002f, 0.463200693f,
   0.413726886f, 0.369147269f, 0.328977687f, 0.292781876f, 0.260166733f, 0.230778038f, 0.204296618f, 0.180434868f, 
   0.158933640f, 0.139559419f, 0.122101791f, 0.106371156f, 0.092196673f, 0.079424399f, 0.067915621f, 0.057545348f, 
-  0.048200953f, 0.039780951f, 0.032193897f, 0.025357391f, 0.019197186f, 0.013646379f, 0.008644684f, 0.004137782f, 0.0f };
-
+  0.048200953f, 0.039780951f, 0.032193897f, 0.025357391f, 0.019197186f, 0.013646379f, 0.008644684f, 0.004137782f, 0.0f
+};
 
 inline static float lookupTable(const float (&table)[TABLE_SIZE+1], float index ) { // lookup value in a table by float index, using linear interpolation
   static float v1, v2, res;
@@ -205,8 +200,6 @@ inline static float sin_lut(const float x_norm) {
   return res;
 }
 
-
-
 // norm_x belongs to [0..1], returns sin(alpha) curve for alpha [-pi/2 .. pi/2] normalized to [0..1]
 inline static float sin_fadein(float norm_x) {
   return -0.5f * lookupTable(sin_tbl, HALF_TABLE * norm_x + QUARTER_TABLE) + 0.5f;
@@ -237,4 +230,22 @@ inline static float lin_interpolate(float& v1, float& v2, float index) {
 
 inline static int32_t safe_index(int32_t x) {
   return x & ~(x >> 31);
+}
+
+inline static float limited(float in) {
+  if (in > 1.0f) return 1.0f;
+  if (in < -1.0f) return -1.0f;
+  return in;
+}
+
+static inline float saturate_cubic(float x) {
+    // Soft clipping cubic saturator
+    // Good balance of smoothness and efficiency
+    return x - (x * x * x) * (1.0f / 3.0f);
+}
+
+static inline float fclamp(float in, float min, float max){
+  if (in>max) return max;
+  if (in<min) return min;
+  return in;
 }

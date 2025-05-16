@@ -4,7 +4,7 @@
 static const char* TAG = "I2SAUDIO";
 
 /*
-  malloc_caps hints
+  _malloc_caps hints
       MALLOC_CAP_EXEC     Memory must be able to run executable code
       MALLOC_CAP_32BIT    Memory must allow for aligned 32-bit data accesses
       MALLOC_CAP_8BIT     Memory must allow for 8/16/...-bit data accesses
@@ -15,31 +15,38 @@ static const char* TAG = "I2SAUDIO";
       MALLOC_CAP_INVALID  Memory can't be used / list end marker
 */
 
-void I2S_Audio::init(eI2sMode select_mode) {
-  _i2s_mode = select_mode;
-  
-#ifndef USE_V3
-  i2s_mode_t port_mode;
-#else
-#if (CHANNEL_SAMPLE_BYTES == 4)
-  uint32_t malloc_caps =  ( MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT );
-#else
-  uint32_t malloc_caps =  ( MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT );
-#endif
+BUF_TYPE* I2S_Audio::allocateBuffer(const char* name) {
+    BUF_TYPE* buf = (BUF_TYPE*)heap_caps_calloc(16, _buffer_size, _malloc_caps);
+    if (!buf) {
+        ESP_LOGE(TAG, "Couldn't allocate memory for %s buffer", name);
+    } else {
+        ESP_LOGI(TAG, "%s buffer allocated %d bytes, &=%#010x", name, _buffer_size, buf);
+    }
+    return buf;
+}
 
+void I2S_Audio::init(eI2sMode select_mode) {
+	_i2s_mode = select_mode;
+	_read_remain_smp = 0;
+	_write_remain_smp = 0;
+	
+#ifndef USE_V3
+	i2s_mode_t port_mode;
+#else
+  #if (CHANNEL_SAMPLE_BYTES == 4)
+	_malloc_caps = ( MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT );
+  #else
+	_malloc_caps = ( MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT );
+  #endif
 #endif  
+
   switch(_i2s_mode) {
     case MODE_IN:
     #ifndef USE_V3
       port_mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
     #endif
       pinMode(I2S_DIN_PIN, INPUT);
-      _input_buf = (BUF_TYPE*)heap_caps_calloc( 1, _buffer_size , malloc_caps );
-      if (_input_buf == NULL) {
-        ESP_LOGI(TAG, "Couldn't allocate memory for I2S input buffer"); 
-      } else { 
-        ESP_LOGI(TAG, "I2S input buffer allocated %d bytes, &=%#010x", _buffer_size, _input_buf); 
-      }      
+      _input_buf = allocateBuffer("_input_buf");
       break;
     case MODE_IN_OUT:
     #ifndef USE_V3
@@ -47,18 +54,8 @@ void I2S_Audio::init(eI2sMode select_mode) {
     #endif
       pinMode(I2S_DOUT_PIN, OUTPUT);
       pinMode(I2S_DIN_PIN, INPUT);
-      _input_buf = (BUF_TYPE*)heap_caps_calloc( 1, _buffer_size , malloc_caps );
-      if (_input_buf == NULL) {
-        ESP_LOGI(TAG, "Couldn't allocate memory for I2S input buffer"); 
-      } else { 
-        ESP_LOGI(TAG, "I2S input buffer allocated %d bytes, &=%#010x", _buffer_size, _input_buf); 
-      }
-      _output_buf = (BUF_TYPE*)heap_caps_calloc( 1, _buffer_size , malloc_caps );
-      if (_output_buf == NULL) {
-        ESP_LOGI(TAG, "Couldn't allocate memory for I2S output buffer"); 
-      } else { 
-        ESP_LOGI(TAG, "I2S output buffer allocated %d bytes, &=%#010x", _buffer_size, _output_buf); 
-      }
+      _input_buf = allocateBuffer("_input_buf");
+      _output_buf = allocateBuffer("_output_buf");
       break;
     case MODE_OUT:
     default:
@@ -66,12 +63,7 @@ void I2S_Audio::init(eI2sMode select_mode) {
       port_mode = (i2s_mode_t)( I2S_MODE_MASTER | I2S_MODE_TX );
     #endif
       pinMode(I2S_DOUT_PIN, OUTPUT);
-      _output_buf = (BUF_TYPE*)heap_caps_calloc( 1, _buffer_size , malloc_caps );
-      if (_output_buf == NULL) {
-        ESP_LOGI(TAG, "Couldn't allocate memory for I2S output buffer"); 
-      } else { 
-        ESP_LOGI(TAG, "I2S output buffer allocated %d bytes, &=%#010x", _buffer_size, _output_buf); 
-      }
+      _output_buf = allocateBuffer("_output_buf");
 
   }
   pinMode(I2S_BCLK_PIN, OUTPUT);
@@ -145,47 +137,45 @@ void I2S_Audio::init(eI2sMode select_mode) {
 }
 
 void I2S_Audio::deInit() {
-  free(_input_buf);
-  free(_output_buf);
+	if (_input_buf) { free(_input_buf); _input_buf = nullptr; }
+	if (_output_buf) { free(_output_buf); _output_buf = nullptr; }
 #ifdef USE_V3  
-  i2s_channel_disable(tx_handle);
-  i2s_del_channel(tx_handle);
+	i2s_channel_disable(tx_handle);
+	i2s_del_channel(tx_handle);
 #else
-  i2s_zero_dma_buffer(_i2s_port);
-  i2s_driver_uninstall(_i2s_port);
+	i2s_zero_dma_buffer(_i2s_port);
+	i2s_driver_uninstall(_i2s_port);
 #endif
 }
 
 
 void I2S_Audio::readBuffer(BUF_TYPE* buf) {
-  size_t bytes_read = 0;
-  int32_t err = 0;
+	size_t bytes_read = 0;
+	int32_t err = 0;
 #ifdef USE_V3
-  err = i2s_channel_read(rx_handle, buf, _buffer_size, &bytes_read, portMAX_DELAY);
-  _read_remain_smp = DMA_BUFFER_LEN;
+	err = i2s_channel_read(rx_handle, buf, _buffer_size, &bytes_read, portMAX_DELAY);
+	_read_remain_smp = DMA_BUFFER_LEN;
 #else
-	int32_t err = i2s_read(_i2s_port, (void*) buf, _buffer_size, &bytes_read, portMAX_DELAY);
-
+	err = i2s_read(_i2s_port, (void*) buf, _buffer_size, &bytes_read, portMAX_DELAY);
 #endif
-	if (err || bytes_read < _buffer_size) {
-		ESP_LOGI(TAG, "I2S read error, bytes read: %d", bytes_read);
+	if (err != ESP_OK || bytes_read < _buffer_size) {
+		ESP_LOGI(TAG, "I2S read, err %d bytes read: %d", err,  bytes_read);
 	}
-  _read_remain_smp = bytes_read / WHOLE_SAMPLE_BYTES;
+	_read_remain_smp = bytes_read / WHOLE_SAMPLE_BYTES;
 }
 
 void I2S_Audio::writeBuffer(BUF_TYPE* buf){
-  size_t bytes_written = 0;
-  int32_t err = 0;
+	size_t bytes_written = 0;
+	int32_t err = 0;
 #ifdef USE_V3 
-  err = i2s_channel_write(tx_handle, buf, _buffer_size, &bytes_written, portMAX_DELAY);
+	err = i2s_channel_write(tx_handle, buf, _buffer_size, &bytes_written, portMAX_DELAY);
 #else
 	err = i2s_write(_i2s_port, (char *)buf, _buffer_size, &bytes_written, portMAX_DELAY);
 #endif
-  _write_remain_smp = bytes_written / WHOLE_SAMPLE_BYTES;
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Error writing to port");  
-  }
-  taskYIELD();
+	_write_remain_smp = bytes_written / WHOLE_SAMPLE_BYTES;
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Error writing to port");  
+	}
 }
 
 void I2S_Audio::getSamples(float* sampleLeft, float* sampleRight){
@@ -216,7 +206,7 @@ void I2S_Audio::getSamples(float& sampleLeft, float& sampleRight, BUF_TYPE* buf 
   sampleLeft = convertInSample(_input_buf[AUDIO_CHANNEL_NUM * n ]);
   sampleRight = convertInSample(_input_buf[AUDIO_CHANNEL_NUM * n + 1]);
 #else
-  sampleLeft = convertInSample(_input_buf[AUDIO_CHANNEL_NUM * n + chan]);
+  sampleLeft = convertInSample(_input_buf[AUDIO_CHANNEL_NUM * n + _chan]);
 #endif
   _read_remain_smp--;
   if (_read_remain_smp <= 0) {
@@ -259,3 +249,28 @@ void I2S_Audio::putSamples(float& sampleLeft, float& sampleRight, BUF_TYPE* buf 
     writeBuffer(buf);
   }  
 }
+
+void I2S_Audio::writeBuffers(float* L, float* R) {
+    if (!_output_buf) return;
+
+    for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
+        int16_t l = convertOutSample(L[i]);
+        int16_t r = convertOutSample(R[i]);
+
+#if CHANNEL_SAMPLE_BYTES == 4
+        _output_buf[i] = (uint16_t)l | ((uint32_t)(uint16_t)r << 16);
+#else
+        _output_buf[2 * i + 0] = l;
+        _output_buf[2 * i + 1] = r;
+#endif
+    }
+
+#ifdef USE_V3  
+    size_t bytes_written = 0;
+    i2s_channel_write(tx_handle, _output_buf, _buffer_size, &bytes_written, portMAX_DELAY);
+#else
+    size_t bytes_written = 0;
+    i2s_write(_i2s_num, _output_buf, _buffer_size, &bytes_written, portMAX_DELAY);
+#endif
+}
+

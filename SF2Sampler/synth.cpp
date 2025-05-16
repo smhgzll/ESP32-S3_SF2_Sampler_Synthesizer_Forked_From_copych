@@ -1,6 +1,23 @@
+/**
+*
+*/
+
 #include "synth.h"
+#include "config.h"
 #include <float.h>
 #include <math.h>
+#include <FS.h>
+#include <SD_MMC.h>
+#include <LittleFS.h>
+
+#include "fx_chorus.h"
+#include "fx_reverb.h"
+#include "fx_delay.h"
+
+extern FxChorus chorus;
+extern FxReverb reverb;
+extern FxDelay delayfx;
+
 static const char* TAG = "Synth";
 
 float pitchBendRatioFromValue(int bendValue, float semitoneRange) {
@@ -20,6 +37,14 @@ Synth::Synth(SF2Parser& parserRef) : parser(parserRef) {
     for (int i = 0; i < MAX_VOICES; ++i) {
         voices[i].init();
     }
+}
+
+bool Synth::begin() {
+    if (!parser.parse()) {
+        ESP_LOGW(TAG, "No SF2 parsed. Auto-loading next SF2...");
+        return loadNextSf2();
+    }
+    return true;
 }
 
 void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
@@ -52,19 +77,23 @@ void Synth::noteOff(uint8_t ch, uint8_t note) {
     for (Voice& v : voices) {
         if (v.active && v.channel == ch && v.note == note) {
             {
+                v.noteHeld = false;
                 v.stop();
             }
         }
     }
 }
 
+
 void Synth::pitchBend(uint8_t ch, int value) {
     if (ch >= 16) return;
-    channels[ch].pitchBend = value;
 
     float norm = (value - 8192) * DIV_8192;
     float semis = norm * channels[ch].pitchBendRange;
+
+    channels[ch].pitchBend = norm;
     channels[ch].pitchBendFactor = exp2f(semis * DIV_12);
+
 }
 
 
@@ -108,7 +137,7 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
                 if (!sustainOn) {
                     // Release all sustained voices on this channel
                     for (Voice& v : voices) {
-                        if (v.active && v.channel == ch) {
+                        if (v.active && v.channel == ch && !v.noteHeld) {
                             v.stop(); 
                         }
                     }
@@ -121,6 +150,9 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
         case 93: // Chorus Send
             state.chorusSend = fval;
             break; 
+        case 95: // Delay Send
+            state.delaySend = fval;
+            break;
         case 101: rpn.msb = val; break; // RPN MSB
         case 100: rpn.lsb = val; break; // RPN LSB
         case 120: // All Sound Off
@@ -161,7 +193,7 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
 
     // Fallback to Bank 0, same program
     ESP_LOGW(TAG, "Ch%u: Program %u not found in Bank %u, falling back to Bank 0", ch, program, bank);
-    uint16_t fallbackBank = (bank & 0x007F);  // Keep LSB, zero MSB
+    uint16_t fallbackBank = (bank & 0x7F00);  
     if (parser.hasPreset(fallbackBank, program)) {
         state.setBank(fallbackBank);
         ESP_LOGI(TAG, "Ch%u: Fallback succeeded: Program=%u, Bank=%u", ch, program, fallbackBank);
@@ -181,21 +213,59 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
 }
 
 
-void Synth::renderLR(float* sampleL, float* sampleR) {
-    *sampleL = 0.0f;
-    *sampleR = 0.0f;
+void Synth::renderLRBlock(float* outL, float* outR) {
 
-    for (int i = 0; i < MAX_VOICES; ++i) {
-        Voice& v = voices[i];
-        if (!v.active) continue;
+    // Per-voice accumulation
+    for (int v = 0; v < MAX_VOICES; ++v) {
+        Voice& voice = voices[v];
+        if (!voice.active) continue;
 
-        float smp = v.nextSample(); // Already includes pitch, envelope, etc.
-        float vol = (*v.modVolume) * (*v.modExpression) * v.velocityVolume;
+        float vol = (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume;
+        float cAmt = voice.chorusAmount;
+        float rAmt = voice.reverbAmount;
+        float dAmt = channels[voice.channel].delaySend;
 
-        *sampleL += smp * vol * v.panL;
-        *sampleR += smp * vol * v.panR;
+        for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
+            float smp = voice.nextSample();
+            float l = smp * vol * voice.panL;
+            float r = smp * vol * voice.panR;
+
+            float lDry = l;
+            float rDry = r;
+
+            dryL[i] += lDry;
+            dryR[i] += rDry;
+
+            float lCho = lDry * cAmt;
+            float rCho = rDry * cAmt;
+
+            choL[i] += lCho;
+            choR[i] += rCho;
+
+            float lSum = lDry + lCho;
+            float rSum = rDry + rCho;
+
+            revL[i] += lSum * rAmt;
+            revR[i] += rSum * rAmt;
+
+            delL[i] += lSum * dAmt;
+            delR[i] += rSum * dAmt;
+        }
+    }
+
+    // Apply effects
+    chorus.processBlock(choL, choR);
+    delayfx.ProcessBlock(delL, delR);
+    reverb.processBlock(revL, revR);
+
+    // Final output = Chorus + Reverb + Delay
+    for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
+        outL[i] = dryL[i] + choL[i] + revL[i] + delL[i];
+        outR[i] = dryR[i] + choR[i] + revR[i] + delR[i];
     }
 }
+
+
 
 
 Voice* Synth::findWeakestVoiceOnNote(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass) {
@@ -221,7 +291,7 @@ Voice* Synth::findWeakestVoiceOnNote(uint8_t ch, uint8_t note, float newScore, u
         }
     }
 
-    if (count >= MAX_VOICES_PER_NOTE && weakest && weakestScore < newScore)
+    if (count >= MAX_VOICES_PER_NOTE && weakest)// && weakestScore < newScore)
         return weakest;
 
     return nullptr;
@@ -275,7 +345,7 @@ void Synth::allNotesOff(uint8_t ch) {
     for (Voice& v : voices) {
         if (v.active && v.channel == ch) {
             if (*v.modSustain) {
-                v.sustainHeld = true; // wait until pedal release
+               // v.sustainHeld = true; // wait until pedal release
             } else {
                 v.stop();
             }
@@ -295,8 +365,9 @@ void Synth::GMReset() {
         state.pitchBendRange = 2;     // Default
         state.pitchBendFactor = 1.0f; // No pitch bend
         state.modWheel = 0.0f;
-        state.reverbSend = 0.1f;
+        state.reverbSend = 0.05f;
         state.chorusSend = 0.0f;
+        state.delaySend = 0.0f;
 
         // Reset program
         state.program = 0;
@@ -330,6 +401,82 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
     }
     return false;
 }
+
+fs::FS* Synth::getFileSystem() {
+    switch (fsType) {
+        case FileSystemType::LITTLEFS: return &LittleFS;
+        case FileSystemType::SD: return &SD_MMC;
+        default: return nullptr;
+    }
+}
+
+void Synth::scanSf2Files() {
+    sf2Files.clear();
+    fs::FS* fs = getFileSystem();
+    if (!fs) return;
+
+    File dir = fs->open(SF2_PATH);
+    if (!dir || !dir.isDirectory()) {
+        ESP_LOGE("Synth", "Can't open directory %s", SF2_PATH);
+        return;
+    }
+
+    File entry;
+    while ((entry = dir.openNextFile())) {
+        String name = entry.name();
+        String lower = name;
+        lower.toLowerCase();
+        if (!entry.isDirectory() && lower.endsWith(".sf2")) {
+            sf2Files.push_back(name);
+        }
+    }
+
+    dir.close();
+    currentFileIndex = -1;
+}
+
+bool Synth::loadSf2File(const char* filename) {
+    
+    parser.clear();
+    ESP_LOGI(TAG, "\n\nFree heap: %u, PSRAM: %u\n\n", heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    fs::FS* fs = getFileSystem();
+    if (!fs) {
+        ESP_LOGE("Synth", "Filesystem not initialized");
+        return false;
+    }
+
+    reset();
+
+    String fullPath = String(SF2_PATH) + filename;
+    ESP_LOGI("Synth", "\n\nLoading SF2: %s\n\n", fullPath.c_str());
+
+    SF2Parser tempParser(fullPath.c_str(), fs);
+    if (!tempParser.parse()) {
+        ESP_LOGE("Synth", "Failed to parse %s", fullPath.c_str());
+        return false;
+    }
+
+    parser = std::move(tempParser);
+
+    reset();      // Stop voices and reset channels
+    GMReset();    // Apply GM defaults
+    return true;
+}
+
+bool Synth::loadNextSf2() {
+    if (sf2Files.empty()) {
+        scanSf2Files();
+        if (sf2Files.empty()) {
+            ESP_LOGW("Synth", "No .sf2 files found");
+            return false;
+        }
+    }
+
+    currentFileIndex = (currentFileIndex + 1) % sf2Files.size();
+    return loadSf2File(sf2Files[currentFileIndex].c_str());
+}
+
 
 void Synth::printState() {
     int activeCount = 0;

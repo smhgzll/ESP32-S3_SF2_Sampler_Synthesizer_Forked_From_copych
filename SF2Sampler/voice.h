@@ -16,6 +16,7 @@ struct ChannelState {
     // Effects
     float reverbSend = 0.0f;    // CC#91, 0.0–1.0
     float chorusSend = 0.0f;    // CC#93, 0.0–1.0
+    float delaySend = 0.0f;     // CC#95, 0.0-1.0
 
     // Pitch bend
     float pitchBend = 0.0f;     // -1.0 to +1.0 (centered)
@@ -81,6 +82,7 @@ struct Voice {
     float* modPortaTime = nullptr;
     bool* modPortamento = nullptr;
     bool* modSustain = nullptr;
+    bool noteHeld = false;
 
     float basePhaseIncrement = 1.0f;     // from note and tuning
     float targetPhaseIncrement = 0.0f;     // updated by pitch bend
@@ -89,8 +91,7 @@ struct Voice {
     // Portamento
     float portamentoFactor = 1.0f;         // current factor applied
     float targetPortamentoFactor = 1.0f;   // target to glide to
-    float portamentoRate = 0.0005f;        // tweak as needed for glide speed (smaller = slower) 
-    bool sustainHeld = false;
+    float portamentoRate = 0.0005f;        // tweak as needed for glide speed (smaller = slower)  
     bool portamentoActive = false;
 
     uint32_t WORD_ALIGNED_ATTR length = 0;
@@ -116,13 +117,11 @@ struct Voice {
     void die();
     bool isRunning() const;
     float nextSample();
+    void renderBlock(float* block);
     void init();
     static int usage; // = 0
     int id = 0;
-    inline void setFXSend(float reverb, float chorus) {
-        reverbAmount = reverb;
-        chorusAmount = chorus;
-    }
+
     void updateScore();
     void updatePortamento();
 

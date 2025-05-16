@@ -77,12 +77,15 @@ class I2S_Audio {
     void                        readBuffer()                      { readBuffer(_input_buf); }
     void                        writeBuffer()                     { writeBuffer(_output_buf); }
 
+    void                        writeBuffers(float* L, float* R);
+
+
     // functions that read/write the whole custom buffers supplied via pointer argument
     void                        readBuffer(BUF_TYPE* buf);
     void                        writeBuffer(BUF_TYPE* buf);
     
     // functions that convert samples between normalized float and native I2S PCM data
-    inline float                convertInSample(BUF_TYPE smp)      { return smp * int_to_float; }
+    inline float                convertInSample(BUF_TYPE smp)     { return smp * int_to_float; }
     inline int32_t              convertOutSample(float smp)       { return smp * float_to_int; }
     
     // functions that read/write a single channel sample from/to custom buffers supplied via pointer argument
@@ -112,11 +115,14 @@ class I2S_Audio {
         
     
     // a few more get functions
-    inline int                  getBufSizeBytes()                 { return _buffer_len * WHOLE_SAMPLE_BYTES; }
-    inline int                  getBufLenSmp()                    { return _buffer_len; }
-    inline int                  getChanNum()                      { return _channel_num; }
-    inline int                  getReadSamplesRemain()            { return _read_remain_smp; }
-    inline int                  getWriteSamplesRemain()           { return _write_remain_smp; }
+    inline BUF_TYPE*		getInputBufPointer()			  { return _input_buf; }
+    inline BUF_TYPE*		getOutputBufPointer()			  { return _output_buf; }
+    inline int					getBufSizeBytes()				    { return _buffer_len * WHOLE_SAMPLE_BYTES; }
+    inline int					getBufLenSmp()					    { return _buffer_len; }
+    inline int					getChanNum()					      { return _channel_num; }
+    inline int					getChanBytes()					    { return CHANNEL_SAMPLE_BYTES; }
+    inline int					getReadSamplesRemain()			{ return _read_remain_smp; }
+    inline int					getWriteSamplesRemain()			{ return _write_remain_smp; }
     
   protected:
 
@@ -124,6 +130,8 @@ class I2S_Audio {
     i2s_chan_handle_t tx_handle;
     i2s_chan_handle_t rx_handle;
 #endif
+
+    BUF_TYPE*                   allocateBuffer(const char* name);
     size_t                      _buffer_size                      = AUDIO_CHANNEL_NUM * DMA_BUFFER_LEN * sizeof(BUF_TYPE);
     eI2sMode                    _i2s_mode                         ;
     const i2s_port_t            _i2s_port                         = I2S_NUM_0; // i2s port number
@@ -131,8 +139,10 @@ class I2S_Audio {
     BUF_TYPE*                   _output_buf                       = nullptr;
     uint32_t                    _sample_rate                      = SAMPLE_RATE;
     const int32_t               _buffer_len                       = DMA_BUFFER_LEN;
-    const int32_t               _buffrer_num                      = DMA_BUFFER_NUM;
+    const int32_t               _buffer_num                       = DMA_BUFFER_NUM;
     const int32_t               _channel_num                      = AUDIO_CHANNEL_NUM;
     int32_t                     _read_remain_smp                  = 0;
     int32_t                     _write_remain_smp                 = 0;
+	  uint32_t 					          _chan							                = 0; // mono channel 0/1
+    uint32_t                    _malloc_caps                      = 0;
 };
