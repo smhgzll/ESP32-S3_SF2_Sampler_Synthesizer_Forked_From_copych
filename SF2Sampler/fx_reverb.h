@@ -73,8 +73,8 @@ public:
     }
     SetLevel(1.0f);
     SetTime(0.8f);
-    SetPreDelayTime(5.0f);
-    SetDamping(0.8f);
+    SetPreDelayTime(10.0f);
+    SetDamping(0.6f);
   }
 
   inline void SetPreDelayTime(float ms) {
@@ -110,7 +110,7 @@ public:
   
   inline void processBlock(float* signal_l, float* signal_r) {
     for (int n = 0; n < DMA_BUFFER_LEN; ++n) {
-      float inSample = 0.125f * (signal_l[n] + signal_r[n]);
+      float inSample = 0.5f * (signal_l[n] + signal_r[n]);
 
       // Pre-delay
       predelayBuf[predelayPtr] = inSample;

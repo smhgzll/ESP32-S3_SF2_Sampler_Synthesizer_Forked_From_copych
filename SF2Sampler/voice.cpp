@@ -81,7 +81,7 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
 
     ESP_LOGD(TAG, "ch=%d note=%d attack=%.5f hold=%.5f decay=%.5f sustain=%.3f release=%.5f loopStart=%u loopEnd=%u loopType=%d",
         channel_, note_, z_->attackTime, z_->holdTime, z_->decayTime, z_->sustainLevel, z_->releaseTime, loopStart, loopEnd, loopType);
-    ESP_LOGI(TAG, "ch=%d reverb=%.5f chorus=%.5f", channel, reverbAmount, chorusAmount);
+    ESP_LOGI(TAG, "ch=%d reverb=%.5f chorus=%.5f delay=%.5f", channel, reverbAmount, chorusAmount, ch->delaySend);
 }
 
 

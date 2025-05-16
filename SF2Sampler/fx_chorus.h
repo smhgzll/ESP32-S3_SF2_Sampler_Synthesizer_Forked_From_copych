@@ -16,7 +16,7 @@ public:
         }
 
         setLfoFreq(0.5f);
-        setDepth(0.01f);
+        setDepth(0.002f);
         setBaseDelay(0.03f);
     }
     

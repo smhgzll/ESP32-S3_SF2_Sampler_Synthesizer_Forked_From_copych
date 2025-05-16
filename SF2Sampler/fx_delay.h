@@ -52,7 +52,7 @@ public:
             delayLine_r[i] = 0.0f;
         }
         delayIn = 0;
-        delayFeedback = 0.2f;
+        delayFeedback = 0.1f;
         delayLen = MAX_DELAY / 4;
         mode = DelayMode::Normal;
     }

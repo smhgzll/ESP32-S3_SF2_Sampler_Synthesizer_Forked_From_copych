@@ -37,15 +37,6 @@ public:
     void renderLRBlock(float*, float*);
     
 private:
-
-    alignas(16) float dryL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float dryR[DMA_BUFFER_LEN] = {0};
-    alignas(16) float choL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float choR[DMA_BUFFER_LEN] = {0};
-    alignas(16) float revL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float revR[DMA_BUFFER_LEN] = {0};
-    alignas(16) float delL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float delR[DMA_BUFFER_LEN] = {0};
     
     int currentFileIndex = -1;
     float pitchBendRatio(int value);

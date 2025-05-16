@@ -215,6 +215,15 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
 
 void Synth::renderLRBlock(float* outL, float* outR) {
 
+    alignas(16) float dryL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float dryR[DMA_BUFFER_LEN] = {0};
+    alignas(16) float choL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float choR[DMA_BUFFER_LEN] = {0};
+    alignas(16) float revL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float revR[DMA_BUFFER_LEN] = {0};
+    alignas(16) float delL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float delR[DMA_BUFFER_LEN] = {0};
+
     // Per-voice accumulation
     for (int v = 0; v < MAX_VOICES; ++v) {
         Voice& voice = voices[v];
