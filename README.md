@@ -1,4 +1,4 @@
-# ESP32-S3 SF2 Sampler Synthesizer
+# ESP32-S3 SoundFont (SF2) Sampler Synthesizer
 
 An SF2 (SoundFont 2) based synth designed specifically for the ESP32-S3 microcontroller. This project leverages the enhanced memory capabilities of the ESP32-S3 (with PSRAM) to efficiently load and play SoundFont samples, providing a compact and powerful sampler solution.
 
