@@ -18,7 +18,10 @@
 * https://github.com/copych/SF2_Sampler
 */
 
-#pragma GCC optimize ("O2")
+#pragma GCC optimize ("O3")
+#pragma GCC optimize ("fast-math")
+#pragma GCC optimize ("unsafe-math-optimizations")
+#pragma GCC optimize ("no-math-errno")
 
 static const char* TAG = "Main";
 
@@ -28,6 +31,8 @@ static const char* TAG = "Main";
 #include <Arduino.h>
 #include <float.h>
 #include "config.h"
+ 
+#include "esp_log.h"
 
 #include <FS.h>
 #include "SD_MMC.h"
@@ -38,35 +43,52 @@ static const char* TAG = "Main";
 #include "adsr.h"
 #include "voice.h"
 #include "button.h"
-#include "fx_chorus.h"
-#include "fx_reverb.h"
-#include "fx_delay.h"
 
-#include "esp_log.h"
 #ifdef ENABLE_RGB_LED
     #include "rgb_led.h"
 #endif
-#include "src/usbmidi/src/USB-MIDI.h" 
+
+#if MIDI_IN_DEV == USE_USB_MIDI_DEVICE
+    #include "src/usbmidi/src/USB-MIDI.h"
+#endif
+
 #include "i2s_in_out.h" 
 
 // tasks for Core0 and Core1
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 
-int Voice::usage;
- 
+int Voice::usage; // counts voices internally
+
 
 // ========================== MIDI Instance ===============================================================================================
-// MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
-USBMIDI_CREATE_INSTANCE(0, MIDI); 
+#if MIDI_IN_DEV == USE_MIDI_STANDARD
+    MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
+#endif
+
+#if MIDI_IN_DEV == USE_USB_MIDI_DEVICE
+    USBMIDI_CREATE_INSTANCE(0, MIDI); 
+#endif
 
 // ========================== Global devices ===============================================================================================
+#ifdef ENABLE_CHORUS
+    #include "fx_chorus.h"
+    FxChorus    DRAM_ATTR   chorus;
+#endif
+
+#ifdef ENABLE_REVERB
+    #include "fx_reverb.h"
+    FxReverb    DRAM_ATTR   reverb;
+#endif
+
+#ifdef ENABLE_DELAY
+    #include "fx_delay.h"
+    FxDelay     DRAM_ATTR   delayfx;
+#endif
+
 I2S_Audio   DRAM_ATTR   AudioPort;
 SF2Parser   DRAM_ATTR   parser(SF2_PATH);
 Synth       DRAM_ATTR   synth(parser);
-FxChorus    DRAM_ATTR   chorus;
-FxReverb    DRAM_ATTR   reverb;
-FxDelay     DRAM_ATTR   delayfx;
 
 // ========================== Button ===============================================================================================
 MuxButton myButton;
@@ -93,12 +115,6 @@ void myBtnHandler(int id, MuxButton::btnEvents evt) { // a function that will re
   }
 }
 
-// ========================== Misc ===============================================================================================
-
-
-float pitchBendRatio(int value, float range = 2.0f) {
-    return pow(2.0f, (range * (value - PITCH_BEND_CENTER) * DIV_8192) * DIV_12 );
-}
 
 // ========================== MIDI handlers ===============================================================================================
 void handleNoteOn(byte ch, byte note, byte vel) {
@@ -127,11 +143,17 @@ void handleProgramChange(uint8_t ch, uint8_t program) {
 }
 
 void handleSystemExclusive( uint8_t* data, size_t len) {
-        synth.handleSysEx( data,  len); 
+    synth.handleSysEx( data,  len); 
 }
 
+#ifdef TASK_BENCHMARKING
+// globals to be unsafely shared between tasks
+    uint64_t total_render = 0;
+    uint64_t total_write  = 0;
+    uint32_t frame_count  = 0;
+#endif
+
 // ========================== Core 0 Task ===============================================================================================
- 
 // Core0 task -- AUDIO
 static void IRAM_ATTR audio_task1(void *userData) {
     vTaskDelay(20); 
@@ -140,16 +162,33 @@ static void IRAM_ATTR audio_task1(void *userData) {
     alignas(16) float blockL[DMA_BUFFER_LEN];
     alignas(16) float blockR[DMA_BUFFER_LEN];
 
+
     while (true) {
+        
+#ifdef TASK_BENCHMARKING
+        uint32_t t0 = esp_cpu_get_cycle_count();
+#endif
+
+
         synth.renderLRBlock(blockL, blockR);
 
-        // Optional: limit output per sample
-        for (size_t i = 0; i < DMA_BUFFER_LEN; ++i) {
-            blockL[i] = saturate_cubic(blockL[i]);
-            blockR[i] = saturate_cubic(blockR[i]);
-        }
+
+#ifdef TASK_BENCHMARKING
+        uint32_t t1 = esp_cpu_get_cycle_count();
+#endif
+
 
         AudioPort.writeBuffers(blockL, blockR);
+
+
+#ifdef TASK_BENCHMARKING
+        uint32_t t2 = esp_cpu_get_cycle_count();
+
+        total_render += (t1 - t0);
+        total_write  += (t2 - t1);
+        frame_count++;
+#endif
+
     }
 }
 
@@ -162,14 +201,30 @@ static void IRAM_ATTR audio_task2(void *userData) {
     while (true) { 
         MIDI.read();
         synth.updateScores();
-    #ifdef ENABLE_RGB_LED
+#ifdef ENABLE_RGB_LED
         updateLed();
-    #endif
+#endif
         vTaskDelay(1);
         taskYIELD();
         
         SW = digitalRead(0); // read GPIO0
         myButton.process();
+
+#ifdef TASK_BENCHMARKING
+        if (frame_count >= 1024) {
+            uint32_t avg_render = total_render / frame_count;
+            uint32_t avg_write  = total_write  / frame_count;
+
+            ESP_LOGI(TAG, "Avg cycles over %u frames: render = %u, write = %u",
+                     frame_count, avg_render, avg_write);
+
+            total_render = 0;
+            total_write  = 0;
+            frame_count  = 0;
+        }
+#endif
+
+
     }
 }
 
@@ -182,24 +237,18 @@ void setup() {
     }
     btStop(); 
 
+#if MIDI_IN_DEV == USE_USB_MIDI_DEVICE
   // Change USB Device Descriptor Parameter
-    
     USB.VID(0x1209);
     USB.PID(0x1304);
-    USB.productName("S3 SF2 sampler");
+    USB.productName("S3 SF2 Synth");
     USB.manufacturerName("copych");
-    //USB.serialNumber("0000");
-    //USB.firmwareVersion(0x0000);
     USB.usbVersion(0x0200);
-    //USB.usbClass(0x01);       // Audio (MIDI falls under class 0x01)
-    //USB.usbSubClass(0x03);    // MIDI Streaming subclass
-    //USB.usbProtocol(0x00);
-    
     USB.usbClass(TUSB_CLASS_AUDIO);
     USB.usbSubClass(0x00);
     USB.usbProtocol(0x00);
-    
     USB.usbAttributes(0x80);
+#endif
 
     MIDI.begin(MIDI_CHANNEL_OMNI);
     MIDI.setHandleNoteOn(handleNoteOn);
@@ -226,8 +275,14 @@ void setup() {
         ESP_LOGE(TAG, "LittleFS initialized");
     }
 
+#ifdef ENABLE_REVERB
     reverb.init();
+#endif
+
+#ifdef ENABLE_DELAY
     delayfx.Init();
+#endif
+ 
     synth.begin();
 
 #ifdef ENABLE_RGB_LED

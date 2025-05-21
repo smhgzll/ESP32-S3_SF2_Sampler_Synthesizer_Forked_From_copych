@@ -27,7 +27,7 @@
 
 // converting between float and int here assumes that float signal is normalized within -1.0 .. 1.0 range
 // use the included fclamp() to fix it if needed
-inline float                    fclamp(float smp) { if (smp>1.0f) return 1.0f; if (smp<-1.0f) return -1.0f; return smp; }
+//inline float                    fclamp(float smp) { if (smp>1.0f) return 1.0f; if (smp<-1.0f) return -1.0f; return smp; }
 
 class I2S_Audio {
   

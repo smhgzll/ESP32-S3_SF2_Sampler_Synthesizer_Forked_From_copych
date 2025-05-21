@@ -10,18 +10,26 @@
 #include <SD_MMC.h>
 #include <LittleFS.h>
 
-#include "fx_chorus.h"
-#include "fx_reverb.h"
-#include "fx_delay.h"
+#ifdef ENABLE_CHORUS
+    #include "fx_chorus.h"
+    extern FxChorus chorus;
+#endif
 
-extern FxChorus chorus;
-extern FxReverb reverb;
-extern FxDelay delayfx;
+#ifdef ENABLE_REVERB
+    #include "fx_reverb.h"
+    extern FxReverb reverb;
+#endif
+
+#ifdef ENABLE_DELAY
+    #include "fx_delay.h"
+    extern FxDelay delayfx;
+#endif
+
 
 static const char* TAG = "Synth";
 
 float pitchBendRatioFromValue(int bendValue, float semitoneRange) {
-    float norm = (bendValue - 8192) * DIV_8192; // Normalize to [-1, 1]
+    float norm = (bendValue - PITCH_BEND_CENTER) * DIV_8192; // Normalize to [-1, 1]
     float semis = norm * semitoneRange;
     return exp2f(semis * DIV_12);  // 2^(semitones/12)
 }
@@ -88,7 +96,7 @@ void Synth::noteOff(uint8_t ch, uint8_t note) {
 void Synth::pitchBend(uint8_t ch, int value) {
     if (ch >= 16) return;
 
-    float norm = (value - 8192) * DIV_8192;
+    float norm = (value - PITCH_BEND_CENTER) * DIV_8192;
     float semis = norm * channels[ch].pitchBendRange;
 
     channels[ch].pitchBend = norm;
@@ -144,6 +152,16 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
                 }
             }
             break;
+#ifdef ENABLE_CH_FILTER
+        case 71: // Filter Resonance
+            state.filterResonance = knob_tbl[val] * (FILTER_MAX_Q - 0.5f) + 0.5f;
+            state.recalcFilter();
+            break;
+        case 74: // Filter Cutoff
+            state.filterCutoff = knob_tbl[val] * CH_FILTER_MAX_FREQ + CH_FILTER_MIN_FREQ;
+            state.recalcFilter();
+            break;
+#endif
         case 91: // Reverb Send
             state.reverbSend = fval;
             break;
@@ -213,67 +231,305 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
 }
 
 
-void Synth::renderLRBlock(float* outL, float* outR) {
 
+// Inline filter processing to reduce function call overhead
+#define PROCESS_FILTER_LR(flt, inL, inR) { \
+    float tmpL = inL, tmpR = inR;         \
+    flt.processLR(&tmpL, &tmpR);         \
+    inL = tmpL; inR = tmpR;              \
+}
+
+
+void Synth::renderLRBlock(float* outL, float* outR) {
     alignas(16) float dryL[DMA_BUFFER_LEN] = {0};
     alignas(16) float dryR[DMA_BUFFER_LEN] = {0};
-    alignas(16) float choL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float choR[DMA_BUFFER_LEN] = {0};
-    alignas(16) float revL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float revR[DMA_BUFFER_LEN] = {0};
-    alignas(16) float delL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float delR[DMA_BUFFER_LEN] = {0};
+#ifdef ENABLE_CHORUS
+    alignas(16) float choL[DMA_BUFFER_LEN] = {0}, choR[DMA_BUFFER_LEN] = {0};
+#endif
+#ifdef ENABLE_REVERB
+    alignas(16) float revL[DMA_BUFFER_LEN] = {0}, revR[DMA_BUFFER_LEN] = {0};
+#endif
+#ifdef ENABLE_DELAY
+    alignas(16) float delL[DMA_BUFFER_LEN] = {0}, delR[DMA_BUFFER_LEN] = {0};
+#endif
 
-    // Per-voice accumulation
+#ifdef ENABLE_CH_FILTER
+    // Clear channel dry buffers before mixing
+    for (int ch = 0; ch < 16; ++ch) {
+        memset(channels[ch].dryL, 0, sizeof(float)*DMA_BUFFER_LEN);
+        memset(channels[ch].dryR, 0, sizeof(float)*DMA_BUFFER_LEN);
+    }
+#endif
+
     for (int v = 0; v < MAX_VOICES; ++v) {
         Voice& voice = voices[v];
         if (!voice.active) continue;
 
-        float vol = (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume;
+        float volL = 0.5f * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panL;
+        float volR = 0.5f * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panR;
+
+#ifdef ENABLE_CHORUS
         float cAmt = voice.chorusAmount;
+#endif
+#ifdef ENABLE_REVERB
         float rAmt = voice.reverbAmount;
+#endif
+#ifdef ENABLE_DELAY
         float dAmt = channels[voice.channel].delaySend;
+#endif
+
+#ifdef ENABLE_CH_FILTER
+        // Mix into channel dry buffers for filtering
+        float* dryLp = channels[voice.channel].dryL;
+        float* dryRp = channels[voice.channel].dryR;
+#else
+        // Mix directly into global dry buffers
+        float* dryLp = dryL;
+        float* dryRp = dryR;
+#endif
+
+#ifdef ENABLE_CHORUS
+        float* choLp = choL;
+        float* choRp = choR;
+#endif
+#ifdef ENABLE_REVERB
+        float* revLp = revL;
+        float* revRp = revR;
+#endif
+#ifdef ENABLE_DELAY
+        float* delLp = delL;
+        float* delRp = delR;
+#endif
 
         for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
             float smp = voice.nextSample();
-            float l = smp * vol * voice.panL;
-            float r = smp * vol * voice.panR;
 
-            float lDry = l;
-            float rDry = r;
+            float l = smp * volL;
+            float r = smp * volR;
 
-            dryL[i] += lDry;
-            dryR[i] += rDry;
+            dryLp[i] += l;
+            dryRp[i] += r;
 
-            float lCho = lDry * cAmt;
-            float rCho = rDry * cAmt;
-
-            choL[i] += lCho;
-            choR[i] += rCho;
-
-            float lSum = lDry + lCho;
-            float rSum = rDry + rCho;
-
-            revL[i] += lSum * rAmt;
-            revR[i] += rSum * rAmt;
-
-            delL[i] += lSum * dAmt;
-            delR[i] += rSum * dAmt;
+#ifdef ENABLE_CHORUS
+            float lCho = l * cAmt;
+            float rCho = r * cAmt;
+            choLp[i] += lCho;
+            choRp[i] += rCho;
+#endif
+#ifdef ENABLE_REVERB
+            float lRev = l, rRev = r;
+#ifdef ENABLE_CHORUS
+            lRev += lCho; rRev += rCho;
+#endif
+            revLp[i] += lRev * rAmt;
+            revRp[i] += rRev * rAmt;
+#endif
+#ifdef ENABLE_DELAY
+            float lDel = l, rDel = r;
+#ifdef ENABLE_CHORUS
+            lDel += lCho; rDel += rCho;
+#endif
+            delLp[i] += lDel * dAmt;
+            delRp[i] += rDel * dAmt;
+#endif
         }
     }
 
-    // Apply effects
-    chorus.processBlock(choL, choR);
-    delayfx.ProcessBlock(delL, delR);
-    reverb.processBlock(revL, revR);
+#ifdef ENABLE_CH_FILTER
+    // Process filters per channel and accumulate to global dry buffers
+    for (int ch = 0; ch < 16; ++ch) {
+        ChannelState& chan = channels[ch];
+        float* bufL = chan.dryL;
+        float* bufR = chan.dryR;
 
-    // Final output = Chorus + Reverb + Delay
+        for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
+            float l = bufL[i];
+            float r = bufR[i];
+            PROCESS_FILTER_LR(chan.filter, l, r);
+            dryL[i] += l;
+            dryR[i] += r;
+        }
+    }
+#endif
+
+#ifdef ENABLE_CHORUS
+    chorus.processBlock(choL, choR);
+#endif
+#ifdef ENABLE_DELAY
+    delayfx.ProcessBlock(delL, delR);
+#endif
+#ifdef ENABLE_REVERB
+    reverb.processBlock(revL, revR);
+#endif
+
     for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
-        outL[i] = dryL[i] + choL[i] + revL[i] + delL[i];
-        outR[i] = dryR[i] + choR[i] + revR[i] + delR[i];
+        outL[i] = dryL[i];
+        outR[i] = dryR[i];
+#ifdef ENABLE_CHORUS
+        outL[i] += choL[i]; outR[i] += choR[i];
+#endif
+#ifdef ENABLE_REVERB
+        outL[i] += revL[i]; outR[i] += revR[i];
+#endif
+#ifdef ENABLE_DELAY
+        outL[i] += delL[i]; outR[i] += delR[i];
+#endif
     }
 }
 
+
+
+
+/*
+void Synth::renderLRBlock(float* outL, float* outR) {
+    alignas(16) float dryL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float dryR[DMA_BUFFER_LEN] = {0};
+
+#ifdef ENABLE_CHORUS
+    alignas(16) float choL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float choR[DMA_BUFFER_LEN] = {0};
+#endif
+
+#ifdef ENABLE_REVERB
+    alignas(16) float revL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float revR[DMA_BUFFER_LEN] = {0};
+#endif
+
+#ifdef ENABLE_DELAY
+    alignas(16) float delL[DMA_BUFFER_LEN] = {0};
+    alignas(16) float delR[DMA_BUFFER_LEN] = {0};
+#endif
+
+#ifdef ENABLE_CH_FILTER
+    for (int ch = 0; ch < 16; ++ch) {
+        memset(channels[ch].dryL, 0, sizeof(float) * DMA_BUFFER_LEN);
+        memset(channels[ch].dryR, 0, sizeof(float) * DMA_BUFFER_LEN);
+    }
+#endif
+
+    for (int v = 0; v < MAX_VOICES; ++v) {
+        Voice& voice = voices[v];
+        if (!voice.active) continue;
+
+        ChannelState& chan = channels[voice.channel];
+
+        float vol = 0.5f * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume;
+        float volL = voice.panL * vol;
+        float volR = voice.panR * vol;
+
+#ifdef ENABLE_CHORUS
+        float cAmt = voice.chorusAmount;
+#endif
+#ifdef ENABLE_REVERB
+        float rAmt = voice.reverbAmount;
+#endif
+#ifdef ENABLE_DELAY
+        float dAmt = chan.delaySend;
+#endif
+
+#ifdef ENABLE_CH_FILTER
+        float* dryLp = chan.dryL;
+        float* dryRp = chan.dryR;
+#else
+        float* dryLp = dryL;
+        float* dryRp = dryR;
+#endif
+
+#ifdef ENABLE_CHORUS
+        float* choLp = choL;
+        float* choRp = choR;
+#endif
+#ifdef ENABLE_REVERB
+        float* revLp = revL;
+        float* revRp = revR;
+#endif
+#ifdef ENABLE_DELAY
+        float* delLp = delL;
+        float* delRp = delR;
+#endif
+
+        for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
+            float smp = voice.nextSample();
+            float l = smp * volL;
+            float r = smp * volR;
+
+            dryLp[i] += l;
+            dryRp[i] += r;
+
+#ifdef ENABLE_CHORUS
+            float lCho = l * cAmt;
+            float rCho = r * cAmt;
+            choLp[i] += lCho;
+            choRp[i] += rCho;
+#endif
+
+#ifdef ENABLE_REVERB
+            float lSum = l;
+            float rSum = r;
+#ifdef ENABLE_CHORUS
+            lSum += lCho;
+            rSum += rCho;
+#endif
+            revLp[i] += lSum * rAmt;
+            revRp[i] += rSum * rAmt;
+#endif
+
+#ifdef ENABLE_DELAY
+            float lSumD = l;
+            float rSumD = r;
+#ifdef ENABLE_CHORUS
+            lSumD += lCho;
+            rSumD += rCho;
+#endif
+            delLp[i] += lSumD * dAmt;
+            delRp[i] += rSumD * dAmt;
+#endif
+        }
+    }
+
+#ifdef ENABLE_CH_FILTER
+    for (int ch = 0; ch < 16; ++ch) {
+        ChannelState& chan = channels[ch];
+        float* srcL = chan.dryL;
+        float* srcR = chan.dryR;
+        for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
+            float l = srcL[i];
+            float r = srcR[i];
+            chan.filter.processLR(&l, &r);
+            dryL[i] += l;
+            dryR[i] += r;
+        }
+    }
+#endif
+
+#ifdef ENABLE_CHORUS
+    chorus.processBlock(choL, choR);
+#endif
+#ifdef ENABLE_DELAY
+    delayfx.ProcessBlock(delL, delR);
+#endif
+#ifdef ENABLE_REVERB
+    reverb.processBlock(revL, revR);
+#endif
+
+    for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
+        outL[i] = dryL[i];
+        outR[i] = dryR[i];
+#ifdef ENABLE_CHORUS
+        outL[i] += choL[i];
+        outR[i] += choR[i];
+#endif
+#ifdef ENABLE_REVERB
+        outL[i] += revL[i];
+        outR[i] += revR[i];
+#endif
+#ifdef ENABLE_DELAY
+        outL[i] += delL[i];
+        outR[i] += delR[i];
+#endif
+    }
+}
+*/
 
 
 
@@ -370,13 +626,18 @@ void Synth::GMReset() {
         state.volume = 1.0f;         // CC#7
         state.pan = 0.5f;            // CC#10
         state.expression = 1.0f;     // CC#11
-        state.pitchBend = 0;         // Center
-        state.pitchBendRange = 2;     // Default
+        state.pitchBend = 0.0f;         // Center
+        state.pitchBendRange = 2.0f;     // Default
         state.pitchBendFactor = 1.0f; // No pitch bend
         state.modWheel = 0.0f;
         state.reverbSend = 0.05f;
         state.chorusSend = 0.0f;
         state.delaySend = 0.0f;
+        
+#ifdef ENABLE_CH_FILTER
+        state.filterCutoff = 20000.0f;
+        state.filterResonance = 0.707f;
+#endif
 
         // Reset program
         state.program = 0;

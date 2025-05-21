@@ -6,11 +6,11 @@ static const char* TAG = "SF2Parser";
 
 static float timecentsToSec(int tc) {
     if (tc <= -32768) return 0.0f;
-    return powf(2.0f, tc * 8.3333333e-04f); // timecents → секунды
+    return powf(2.0f, tc * 8.3333333e-04f); // timecents → seconds ( 1 / 1200 )
 }
 
 static float centsToHz(int cents) {
-    return 8.176f * powf(2.0f, cents * 8.3333333e-04f); // cents → Hz
+    return 8.176f * powf(2.0f, cents * 8.3333333e-04f); // cents → Hz ( 1 / 1200 )
 }
 
 inline float dB_to_linear(float dB) {
@@ -479,7 +479,7 @@ void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) 
                 zone.decayTime = timecentsToSec(val);
                 break;
             case GeneratorOperator::SustainVolEnv:
-                zone.sustainLevel = constrain(1.0f - (val * 0.001f), 0.0f, 1.0f);
+                zone.sustainLevel = powf(10.0f, -val / 200.0f);  // val is in centibels
                 break;
             case GeneratorOperator::ReleaseVolEnv:
                 zone.releaseTime = timecentsToSec(val);
@@ -488,7 +488,7 @@ void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) 
                 zone.modDecayTime = timecentsToSec(val);
                 break;
             case GeneratorOperator::SustainModEnv:
-                zone.modSustainLevel = constrain(1.0f - (val * 0.001f), 0.0f, 1.0f);
+                zone.modSustainLevel = powf(10.0f, -val / 200.0f);  // val is in centibels
                 break;
             case GeneratorOperator::Pan:
                 zone.pan = val * 0.01f;

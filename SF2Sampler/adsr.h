@@ -60,7 +60,6 @@ enum eEnd_t { END_REGULAR, END_SEMI_FAST, END_FAST, END_NOW };
     void setReleaseTime(float timeInS);
     void setFastReleaseTime(float timeInS);
     void setSemiFastReleaseTime(float timeInS);
-  //  void setModDecayTime(float timeInS);
 
   private:
     void setTimeConstant(float timeInS, float& time, float& coeff);
@@ -112,9 +111,6 @@ enum eEnd_t { END_REGULAR, END_SEMI_FAST, END_FAST, END_NOW };
     float   releaseD0_{0.f};
     float   fastReleaseD0_{0.f};
     float   semiFastReleaseD0_{0.f};
- //   float   modDecayTime_{8.0f};
- //   float   modDecayLevel_{1.0f};
- //   float   modDecayCoeff_{1.0f};
     float   holdTime_ = 0.0f;   // seconds
     uint32_t holdSamples_ = 0; // how many samples to hold
     uint32_t holdCounter_ = 0; // current counter

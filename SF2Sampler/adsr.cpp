@@ -12,8 +12,6 @@ void Adsr::init(float sample_rate, int blockSize) {
     releaseTime_  = -1.f;
     fastReleaseTime_  = -1.f;
     semiFastReleaseTime_  = -1.f;
-    //modDecayTime_  = -1.f;
-    //modDecayLevel_  = 1.0f;
     sus_level_    = 1.0f;
     x_            = 0.0f;
     gate_         = false;
@@ -25,7 +23,6 @@ void Adsr::init(float sample_rate, int blockSize) {
     setTime(ADSR_SEG_RELEASE, 0.05f);
     setTime(ADSR_SEG_FAST_RELEASE, 0.0005f); // a few samples fade, trying to avoid clicks on polyphony overrun
     setTime(ADSR_SEG_SEMI_FAST_RELEASE, 0.02f); // for exclusive note groups voice stealing
-   // setTime(ADSR_SEG_MOD_DECAY, -0.1f); // for unconditional sample decaying (i.e. looped ones)
 }
 
 
@@ -35,7 +32,6 @@ void Adsr::retrigger(eEnd_t hardness) {
   switch (hardness) {
     case END_NOW:
       x_ = 0.0f;
-      //modDecayLevel_ = 1.0f;
       D0_ = attackD0_;
       break;
     case END_FAST:
@@ -55,7 +51,6 @@ void Adsr::end(eEnd_t hardness) {
       mode_ = ADSR_SEG_IDLE;
       D0_ = attackD0_;
       x_ = 0.f;
-      //modDecayLevel_ = 1.0f;
       break;
     }
     case END_FAST:{
@@ -196,9 +191,7 @@ void Adsr::setTimeConstant(float timeInS, float& time, float& coeff) {
   if (timeInS != time) {
     time = timeInS;
     if (time > 0.f) {
-      coeff = 1.f - expf(-1.0f / (0.2 * time * sample_rate_));
-    //  float exponent = 1.0f / (time * sample_rate_);
-    //  float coeff = 1.0f - powf(0.1f, exponent);
+      coeff = 1.f - expf(-1.0f / (0.2f * time * sample_rate_));
     } else
       coeff = 1.f;  // instant change
   }
