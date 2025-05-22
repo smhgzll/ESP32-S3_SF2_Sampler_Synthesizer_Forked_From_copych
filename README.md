@@ -1,12 +1,12 @@
 # ESP32-S3 SoundFont (SF2) Sampler Synthesizer
 
-An SF2 (SoundFont 2) based synth designed specifically for the ESP32-S3 microcontroller. This project leverages the enhanced memory capabilities of the ESP32-S3 (with PSRAM) to efficiently load and play SoundFont samples, providing a compact and powerful sampler solution.
+An SF2 (SoundFont 2) based synth designed specifically for the ESP32-S3 microcontroller. This project leverages the enhanced memory capabilities of the ESP32-S3 (with PSRAM) to efficiently load and play SoundFont samples, providing a compact and powerful sampler solution. It's cheap and simple, yet powerful.
 
 ---
 
 ## Overview
 
-The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP32-S3 variant due to its improved PSRAM and memory management compared to the original ESP32. It supports external DACs like the PCM5102 for high-quality audio output and uses the built-in USB hardware of the ESP32-S3 to function as a USB MIDI device.
+The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP32-S3 variant due to its improved PSRAM and memory management compared to the original ESP32. It supports external DACs like the PCM5102 for high-quality audio output and uses the built-in USB hardware of the ESP32-S3 to function as a USB MIDI device. By default, the BOOT button of the DevBoard is configured to cycle through SF2 files on the current filesystem. Long press on BOOT button will switch between Flash LittleFS and SD filesystems.
 
 ---
 
@@ -32,13 +32,31 @@ The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP3
 
 ---
 
-## Pin Connections
+## I2S DAC (PCM 5102) Pin Connections
 
 | Signal | GPIO Pin |
 |--------|----------|
 | BCK    | GPIO5    |
 | DTA    | GPIO6    |
 | WCK    | GPIO7    |
+| CS     | GND      |
+---
+
+
+## SD CARD Pin Connections:
+
+| Signal | GPIO Pin |
+|--------|----------|
+| CMD     | GPIO38  |
+| CLK     | GPIO39  |
+| D0     | GPIO10  |
+| D1     | GPIO11  |
+| D2     | GPIO12  |
+| D3     | GPIO13  |
+| VCC    | 3V3  |
+| GND    | GND  |
+
+These pins can be changed in config.h if needed
 
 ---
 
@@ -52,6 +70,8 @@ To build and upload this project using Arduino IDE, configure the following sett
 - **Partition Scheme**: Choose a partition with the most available SPDIFF space
 - **USB Mode**: Select **TINY USB**
 - **Core Debug Level**: Set to **Info** or lower (higher debug levels may block USB functionality)
+- **Upload SF2 files to internal Flash**: use this plugin for Arduino IDE 2.x.x https://github.com/earlephilhower/arduino-littlefs-upload , or ths one https://github.com/earlephilhower/arduino-esp8266littlefs-plugin if you use Arduino IDE 1.x
+- **Wire a microSD or SD card** to have a lot of SF2 files to choose from 
 
 ---
 
