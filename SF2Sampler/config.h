@@ -20,7 +20,7 @@
 #define ENABLE_REVERB           // comment this out to disable reverb 
 #define ENABLE_CHORUS           // comment this out to disable chorus
 //#define ENABLE_DELAY              // comment this out to disable delay
-#define ENABLE_CH_FILTER            // comment this out to disable channel lo-pass filter
+//#define ENABLE_CH_FILTER            // comment this out to disable channel lo-pass filter
 
 #define CH_FILTER_MAX_FREQ 7000.0f
 #define CH_FILTER_MIN_FREQ 50.0f
