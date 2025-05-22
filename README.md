@@ -12,14 +12,15 @@ The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP3
 
 ## Features
 
-- **SoundFont 2 (SF2) support**: Load and play SF2 sample banks as large as your PSRAM is.
-- **SD/LittleFS support**: Switch filesystems at runtime. Supports fast 4-bit SD_MMC bus.
-- **USB MIDI device**: Connect directly to a computer or MIDI host via USB.
-- **MIDI controlled**: Send bank/program change, sustain, common CC's and RPNs as well as GM reset with drums on 10'th channel, etc.
-- **Audio effects**: Reverb (CC#91), chorus (CC#93), delay (CC#95)
-- **External DAC support**: Compatible with PCM5102 and similar DACs.
-- **Optimized for ESP32-S3**: Takes advantage of the enhanced PSRAM and memory architecture.
-- **Simple hardware connections**: Minimal wiring required.
+- **SF2 playback**: Load SoundFont2 banks up to PSRAM size.
+- **Filesystem**: Runtime switch between LittleFS and fast 4-bit SD_MMC.
+- **USB MIDI**: Plug-and-play MIDI device support.
+- **Per-voice filters**: Optional biquad LPF (configurable in `config.h`).
+- **Per-channel filters**: Optional CC#74/71-controlled LPF/resonance.
+- **Effects**: Reverb (CC#91), Chorus (CC#93), Delay (CC#95).
+- **MIDI control**: GM-compatible CCs, PC, RPNs, drums on ch.10, GM reset.
+- **External DAC**: Works with PCM5102 and similar I2S DACs.
+- **ESP32-S3 optimized**: Dual-core, PSRAM, minimal wiring.
 
 ---
 
