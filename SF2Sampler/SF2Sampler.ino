@@ -195,7 +195,7 @@ static void IRAM_ATTR audio_task1(void *userData) {
 
 // ========================== Core 1 Task ===============================================================================================
 static void IRAM_ATTR audio_task2(void *userData) { 
-    vTaskDelay(20);
+    vTaskDelay(50);
     ESP_LOGI(TAG, "Starting Task2");
     
     while (true) { 
@@ -209,7 +209,7 @@ static void IRAM_ATTR audio_task2(void *userData) {
         
         SW = digitalRead(0); // read GPIO0
         myButton.process();
-
+        
 #ifdef TASK_BENCHMARKING
         if (frame_count >= 1024) {
             uint32_t avg_render = total_render / frame_count;

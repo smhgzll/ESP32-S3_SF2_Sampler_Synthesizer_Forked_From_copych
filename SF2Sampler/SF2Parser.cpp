@@ -16,6 +16,7 @@ static float centsToHz(int cents) {
 inline float dB_to_linear(float dB) {
     return exp2f(dB * 0.050025f);  // ≈ dB / 20 * log2(10)
 }
+
 //struct PHDR { char name[20]; uint16_t preset, bank, bagIndex; uint32_t dummy[5]; };
 struct __attribute__((packed)) PHDR {
     char name[20];
@@ -484,8 +485,17 @@ void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) 
             case GeneratorOperator::ReleaseVolEnv:
                 zone.releaseTime = timecentsToSec(val);
                 break;
+            case GeneratorOperator::AttackModEnv:
+                zone.modAttackTime = timecentsToSec(val);
+                break;
             case GeneratorOperator::DecayModEnv:
                 zone.modDecayTime = timecentsToSec(val);
+                break;
+            case GeneratorOperator::ReleaseModEnv:
+                zone.modReleaseTime = timecentsToSec(val);
+                break;
+            case GeneratorOperator::ModEnvToPitch:
+                zone.modEnvToPitch = val;
                 break;
             case GeneratorOperator::SustainModEnv:
                 zone.modSustainLevel = powf(10.0f, -val / 200.0f);  // val is in centibels
@@ -496,6 +506,15 @@ void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) 
             case GeneratorOperator::InitialFilterFc:
                 zone.filterFc = centsToHz(val);
                 break;
+            case GeneratorOperator::VibLfoToPitch:
+                zone.vibLfoToPitch = val;  // in cents
+                break;
+            case GeneratorOperator::VibLfoDelay:
+                zone.vibLfoDelay = timecentsToSec(val);  // val is in timecents
+                break;
+            case GeneratorOperator::VibLfoFreq:
+                zone.vibLfoFreq = centsToHz(val);  // val is in cents, convert to Hz
+                break;
             case GeneratorOperator::InitialFilterQ:
                 zone.filterQ = val * 0.1f;
                 break;
@@ -504,6 +523,21 @@ void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) 
                 break;
             case GeneratorOperator::ChorusEffectsSend:
                 zone.chorusSend = val * 0.001f;
+                break;
+            case GeneratorOperator::ModLfoToPitch:
+                zone.modLfoToPitch = val;  // in cents
+                break;
+            case GeneratorOperator::ModLfoToFilterFc:
+                zone.modLfoToFilterFc = val;  // in cents
+                break;
+            case GeneratorOperator::ModLfoToVolume:
+                zone.modLfoToVolume = powf(10.0f, -val / 200.0f);  // in centibels
+                break;
+            case GeneratorOperator::ModLfoDelay:
+                zone.modLfoDelay = timecentsToSec(val);;
+                break;
+            case GeneratorOperator::ModLfoFreq:
+                zone.modLfoFreq = centsToHz(val);
                 break;
 
             default:

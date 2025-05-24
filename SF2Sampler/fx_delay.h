@@ -94,16 +94,14 @@ public:
             float outL = delayLine_l[outIndex];
             float outR = delayLine_r[outIndex];
 
-            // Сначала записываем входной сигнал + обратную связь в линию задержки
             if (mode == DelayMode::PingPong) {
-                delayLine_l[delayIn] = buffer_l[i] + outR * delayFeedback;  // Перекрёстная обратная связь
+                delayLine_l[delayIn] = buffer_l[i] + outR * delayFeedback;  
                 delayLine_r[delayIn] = buffer_r[i] + outL * delayFeedback;
             } else {
                 delayLine_l[delayIn] = buffer_l[i] + outL * delayFeedback;
                 delayLine_r[delayIn] = buffer_r[i] + outR * delayFeedback;
             }
 
-            // Теперь берём задержанный сигнал и отправляем на выход (fully wet)
             buffer_l[i] = outL;
             buffer_r[i] = outR;
 

@@ -7,10 +7,9 @@
 * 
 *
 */
+
 #pragma once
 #include "config.h"
-
-#include <esp_dsp.h>
 
 #ifdef BOARD_HAS_PSRAM 
   #define REV_MULTIPLIER 1.8f
@@ -111,32 +110,22 @@ public:
   }
   
   inline void processBlock(float* signal_l, float* signal_r) {
-    int mask = predelaySize - 1;
-    float level = rev_level;
-
-    alignas(16) float monoIn[DMA_BUFFER_LEN];
-
-    // Vectorized: monoIn[n] = 0.3f * (signal_l[n] + signal_r[n])
-    dsps_add_f32_ae32(signal_l, signal_r, monoIn, DMA_BUFFER_LEN, 1, 1, 1);
-    dsps_mulc_f32_ae32(monoIn, monoIn, DMA_BUFFER_LEN, 0.3f, 1, 1);
-
     for (int n = 0; n < DMA_BUFFER_LEN; ++n) {
-      alignas(16) float inSample = monoIn[n];
+      float inSample = 0.5f * (signal_l[n] + signal_r[n]);
 
+      // Pre-delay
       predelayBuf[predelayPtr] = inSample;
-      alignas(16) float delayed = predelayBuf[predelayReadOffset];
+      float delayed = predelayBuf[predelayReadOffset];
+      predelayPtr = (predelayPtr + 1) % predelaySize;
+      predelayReadOffset = (predelayReadOffset + 1) % predelaySize;
 
-      predelayPtr = (predelayPtr + 1) & mask;
-      predelayReadOffset = (predelayReadOffset + 1) & mask;
+      float wetL = processChannel(0, delayed);
+      float wetR = processChannel(1, delayed);
 
-      alignas(16) float wetL = processChannel(0, delayed);
-      alignas(16) float wetR = processChannel(1, delayed);
-
-      signal_l[n] = level * wetL;
-      signal_r[n] = level * wetR;
+      signal_l[n] = rev_level * wetL;
+      signal_r[n] = rev_level * wetR;
     }
   }
-
 
   inline void process(float* signal_l, float* signal_r) {
     // Store current input sample into predelay buffer
@@ -161,32 +150,32 @@ public:
 
 private:
 
-  alignas(16) float comb_dampings[NUM_COMBS] = {0.2f, 0.25f, 0.3f, 0.22f}; 
+  float comb_dampings[NUM_COMBS] = {0.2f, 0.25f, 0.3f, 0.22f}; 
   float* predelayBuf = nullptr;
-  alignas(16) int predelaySize = 0;
-  alignas(16) int predelayPtr = 0;
-  alignas(16) int predelayReadOffset = 0;
-  alignas(16) float globalDamping = 0.25f;
+  int predelaySize = 0;
+  int predelayPtr = 0;
+  int predelayReadOffset = 0;
+  float globalDamping = 0.25f;
 
   float rev_time = 0.5f;
   float rev_level = 0.5f;
 
   float* combBuf[2][NUM_COMBS] = {};
-  alignas(16) int combSize[2][NUM_COMBS] = {};
-  alignas(16) int combPtr[2][NUM_COMBS] = {};
-  alignas(16) int combLim[2][NUM_COMBS] = {};
-  alignas(16) float combStore[2][NUM_COMBS] = {};  // for damping
+  int combSize[2][NUM_COMBS] = {};
+  int combPtr[2][NUM_COMBS] = {};
+  int combLim[2][NUM_COMBS] = {};
+  float combStore[2][NUM_COMBS] = {};  // for damping
 
   float* allpassBuf[2][NUM_ALLPASSES] = {};
-  alignas(16) int allpassSize[2][NUM_ALLPASSES] = {};
-  alignas(16) int allpassPtr[2][NUM_ALLPASSES] = {};
-  alignas(16) int allpassLim[2][NUM_ALLPASSES] = {};
+  int allpassSize[2][NUM_ALLPASSES] = {};
+  int allpassPtr[2][NUM_ALLPASSES] = {};
+  int allpassLim[2][NUM_ALLPASSES] = {};
 
   inline float processChannel(int ch, float input) {
-    alignas(16) float sum = 0.0f;
+    float sum = 0.0f;
     for (int i = 0; i < NUM_COMBS; ++i)
       sum += doComb(ch, i, input);
-    alignas(16) float out = sum / NUM_COMBS;
+    float out = sum / NUM_COMBS;
     for (int i = 0; i < NUM_ALLPASSES; ++i)
       out = doAllpass(ch, i, out);
     return out;
@@ -194,12 +183,14 @@ private:
 
   inline float doComb(int ch, int idx, float in) {
     int& p = combPtr[ch][idx];
-    alignas(16) float g = comb_gains[idx];
+    float g = comb_gains[idx];
     float& store = combStore[ch][idx];
     float* buf = combBuf[ch][idx];
 
-    alignas(16) float out = buf[p];
-    store += comb_dampings[ch] * (out - store);  // 1-pole LPF
+    float out = buf[p];
+ //   store += comb_dampings[idx] * (out - store);  // 1-pole LPF
+    store = store * (1.0f - comb_dampings[idx]) + out * comb_dampings[idx];
+
     buf[p] = in + store * g;
     p = (p + 1 >= combLim[ch][idx]) ? 0 : p + 1;
     return out;
@@ -208,10 +199,10 @@ private:
 
   inline float doAllpass(int ch, int idx, float in) {
     int& p = allpassPtr[ch][idx];
-    alignas(16) float g = allpass_gains[idx];
+    float g = allpass_gains[idx];
     float* buf = allpassBuf[ch][idx];
-    alignas(16) float out = buf[p];
-    alignas(16) float v = out * g + in;
+    float out = buf[p];
+    float v = out * g + in;
     buf[p] = v;
     out = out - g * in;
     p = (p + 1 >= allpassLim[ch][idx]) ? 0 : p + 1;

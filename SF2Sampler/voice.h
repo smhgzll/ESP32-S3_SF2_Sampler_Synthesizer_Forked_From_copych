@@ -4,7 +4,7 @@
 #include "misc.h"
 #include "SF2Parser.h"
 #include "adsr.h"
-#include "biquad.h"
+#include "biquad2.h"
 
 struct ChannelState {
     // Bank and Program
@@ -12,7 +12,7 @@ struct ChannelState {
     alignas(16) float dryL[DMA_BUFFER_LEN] = {0};
     alignas(16) float dryR[DMA_BUFFER_LEN] = {0};
 
-    alignas(16) float portaTime = 0.0f;  // CC#5 value, mapped from 0.0 to 1.0
+    alignas(16) float portaTime = 0.2f;  // CC#5 value, mapped from 0.0 to 1.0
     alignas(16) float volume = 1.0f;        // CC#7, 0.0–1.0
     alignas(16) float expression = 1.0f;    // CC#11, 0.0–1.0
     alignas(16) float pan = 0.5f;           // CC#10, 0.0 = left, 1.0 = right
@@ -48,35 +48,72 @@ struct ChannelState {
     inline float getEffectiveVolume() const {
         return volume * expression;
     }
+
+#ifdef ENABLE_CH_FILTER
+    BiquadFilterInternalCoeffs filter;
+
+    // Filter parameters
+    float filterCutoff = 20000.0f;  // default no filtering
+    float filterResonance = 0.707f;
+    
+    inline void updateFilter(float cutoff, float resonance) {
+      filterCutoff = cutoff;
+      filterResonance = resonance;
+      filter.setFreqAndQ(cutoff, resonance);
+    }
 	
-	inline void reset() {
-		volume = 1.0f;
-		expression = 1.0f;
-		pan = 0.0f;
-		pitchBend = 0.0f;
-        pitchBendFactor = 1.0f;
-		pitchBendRange = 2.0f;
-		sustainPedal = false;
-		portaTime = 0.0f;
-	}
- 
- #ifdef ENABLE_CH_FILTER
-	BiquadFilter filter;
+    inline void recalcFilter() {
+        filter.setFreqAndQ(filterCutoff, filterResonance);
+    }
+    
+    inline void resetFilter() {
+      updateFilter(20000.0f, 0.707f);
+    }
+#elif defined(ENABLE_CH_FILTER_M)
+    
+    BiquadCalc::Coeffs filterCoeffs;
     
     // Filter parameters
     float filterCutoff = 20000.0f;  // default no filtering
     float filterResonance = 0.707f;
+
+    inline void updateFilter(float cutoff, float resonance) {
+        filterCutoff = cutoff;
+        filterResonance = resonance;
+        filterCoeffs = BiquadCalc::calcCoeffs(cutoff, resonance, BiquadCalc::LowPass);
+    }
 	
-	void updateFilter(float cutoff, float resonance) {
-		filterCutoff = cutoff;
-		filterResonance = resonance;
-		filter.setFreqAndQ(cutoff, resonance);
-	}
-	
-    void recalcFilter() {
-        filter.setFreqAndQ(filterCutoff, filterResonance);
+    inline void recalcFilter() {
+        filterCoeffs = BiquadCalc::calcCoeffs(filterCutoff, filterResonance, BiquadCalc::LowPass);
+    }
+    
+    inline void resetFilter() {
+      updateFilter(20000.0f, 0.707f);
     }
 #endif
+
+
+
+    inline void reset() {
+      volume = 1.0f;         // CC#7
+      pan = 0.0f;            // CC#10
+      expression = 1.0f;     // CC#11
+      pitchBend = 0.0f;         // Center
+      pitchBendRange = 2.0f;     // Default
+      pitchBendFactor = 1.0f; // No pitch bend
+      modWheel = 0.0f;
+      reverbSend = 0.05f; // CC#91
+      chorusSend = 0.0f;  // CC#93
+      delaySend = 0.0f;   // CC#95
+      sustainPedal = false; // CC#64
+      portaTime = 0.2f;      // CC#5
+      portamento = false;    // CC#65
+
+#if defined(ENABLE_CH_FILTER) || defined(ENABLE_CH_FILTER_M)
+      resetFilter();
+#endif
+      
+    }
 };
 
 enum LoopType {
@@ -98,11 +135,16 @@ struct Voice {
     alignas(16) uint32_t exclusiveClass = 0;
 
 #ifdef ENABLE_IN_VOICE_FILTERS
-    BiquadFilter filter;
+    BiquadFilterInternalCoeffs filter;
     alignas(16) float filterCutoff = 20000.0f;
     alignas(16) float filterResonance = 0.0f;
 #endif
 
+#ifdef ENABLE_CH_FILTER_M
+    BiquadFilterSharedCoeffs chFilter;
+
+#endif
+    float* modWheel = nullptr; // Pointer to channel mod wheel
     float* modVolume = nullptr;
     float* modExpression = nullptr;
     float* modPitchBendFactor = nullptr;
@@ -112,9 +154,22 @@ struct Voice {
     uint32_t* modSustain = nullptr;
     alignas(16) uint32_t noteHeld = false;
 
+
+    // LFO state
+    float vibLfoPhase = 0.0f;             // advanced per-sample in nextSample()
+    float vibLfoPhaseIncrement = 0.0f;    // set in start()
+    float pitchMod = 1.0f;                // scalar multiplier, updated on Core 1
+    float vibLfoToPitch = 0.0f;           // set from zone->vibLfoToPitch
+    uint32_t vibLfoDelaySamples = 0;
+    uint32_t vibLfoCounter = 0;
+    bool vibLfoActive = false;
+
+
+
     alignas(16) float basePhaseIncrement = 1.0f;     // from note and tuning
     alignas(16) float targetPhaseIncrement = 0.0f;     // updated by pitch bend
     alignas(16) float currentPhaseIncrement = 0.0f;  // final value used in phase stepping
+    alignas(16) float effectivePhaseIncrement = 0.0f; // current value used in phase stepping
 
     // Portamento
     alignas(16) float portamentoFactor = 1.0f;         // current factor applied
@@ -126,11 +181,13 @@ struct Voice {
     alignas(16) uint32_t  loopStart = 0;
     alignas(16) uint32_t  loopEnd = 0;
     alignas(16) uint32_t  loopLength = 0;
-    alignas(16) LoopType  loopType = NO_LOOP;
     alignas(16) uint32_t  active = false; 
     alignas(16) uint32_t  forward = true; // for ping-pong
+    alignas(16) LoopType  loopType = NO_LOOP;
     SampleHeader* sample = nullptr;
     Zone* zone = nullptr;
+  //  ChannelState* ch = nullptr; 
+
     int16_t* data;
 
     Adsr ampEnv;
@@ -165,9 +222,11 @@ struct Voice {
         panR = 0.5f + p * 0.5f;
     }
 
+    void updatePitchMod();
 
     inline void updatePitch() {
         // Recompute currentPhaseIncrement with updated pitch bend or portamento
+        float pb = modPitchBendFactor ? (*modPitchBendFactor) : 1.0f;
         currentPhaseIncrement = basePhaseIncrement * (*modPitchBendFactor) * portamentoFactor;
     }
     

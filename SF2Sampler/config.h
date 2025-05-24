@@ -16,15 +16,16 @@
 #define MAX_VOICES_PER_NOTE 2
 #define PITCH_BEND_CENTER 0
 
-//#define ENABLE_IN_VOICE_FILTERS     // comment this out to disable voice SF2 filters
-#define ENABLE_REVERB           // comment this out to disable reverb 
-#define ENABLE_CHORUS           // comment this out to disable chorus
-//#define ENABLE_DELAY              // comment this out to disable delay
-//#define ENABLE_CH_FILTER            // comment this out to disable channel lo-pass filter
+//#define ENABLE_IN_VOICE_FILTERS       // comment this out to disable voice SF2 filters
+#define ENABLE_REVERB                 // comment this out to disable reverb 
+#define ENABLE_CHORUS                 // comment this out to disable chorus
+//#define ENABLE_DELAY                  // comment this out to disable delay
+//#define ENABLE_CH_FILTER             // comment this out to disable channel lo-pass stereo filter
+#define ENABLE_CH_FILTER_M           // uncomment this line to mono per-channel filtering before stereo split
 
-#define CH_FILTER_MAX_FREQ 7000.0f
+#define CH_FILTER_MAX_FREQ 12000.0f
 #define CH_FILTER_MIN_FREQ 50.0f
-#define FILTER_MAX_Q 10.0f
+#define FILTER_MAX_Q 7.0f
 
 static const char* SF2_PATH = "/"; 
 

@@ -58,9 +58,24 @@ struct Zone {    // --- Обязательные параметры ---
     float sustainLevel = 1.0f; // SustainVolEnv (0.0–1.0)
     float releaseTime = 0.0f;  // ReleaseVolEnv
     float pan = 0.0f;          // Pan (-1.0–1.0)
+    float modAttackTime = 0.0f;
+    float modReleaseTime = 0.0f;
     float modDecayTime = -0.1f;
     float modSustainLevel = 1.0f;
     float attenuation = 1.0f;
+    float modEnvToPitch = 0.0f;
+
+    // Vibrato LFO (pitch modulation only)
+    float vibLfoFreq = 0.0f;       // Hz
+    float vibLfoDelay = 0.0f;      // seconds
+    float vibLfoToPitch = 0.0f;    // cents
+
+    // Modulation LFO
+    float modLfoFreq = 0.0f;          // Hz
+    float modLfoDelay = 0.0f;         // seconds
+    float modLfoToPitch = 0.0f;       // cents
+    float modLfoToVolume = 0.0f;      // centibels
+    float modLfoToFilterFc = 0.0f;    // cents
     
     // --- Фильтр ---
     float filterFc = 13500.0f; // InitialFilterFc (частота среза)

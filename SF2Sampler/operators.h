@@ -18,10 +18,10 @@ enum class GeneratorOperator : uint16_t {
     ChorusEffectsSend          = 15,
     ReverbEffectsSend          = 16,
     Pan                        = 17,
-    DelayModLFO                = 21,
-    FreqModLFO                 = 22,
-    DelayVibLFO                = 23,
-    FreqVibLFO                 = 24,
+    ModLfoDelay                = 21,
+    ModLfoFreq                 = 22,
+    VibLfoDelay                = 23,
+    VibLfoFreq                 = 24,
     DelayModEnv                = 25,
     AttackModEnv               = 26,
     HoldModEnv                 = 27,
@@ -74,10 +74,10 @@ inline const char* toString(GeneratorOperator op) {
         case GeneratorOperator::ChorusEffectsSend:          return "ChorusEffectsSend";
         case GeneratorOperator::ReverbEffectsSend:          return "ReverbEffectsSend";
         case GeneratorOperator::Pan:                        return "Pan";
-        case GeneratorOperator::DelayModLFO:                return "DelayModLFO";
-        case GeneratorOperator::FreqModLFO:                 return "FreqModLFO";
-        case GeneratorOperator::DelayVibLFO:                return "DelayVibLFO";
-        case GeneratorOperator::FreqVibLFO:                 return "FreqVibLFO";
+        case GeneratorOperator::ModLfoDelay:                return "ModLfoDelay";
+        case GeneratorOperator::ModLfoFreq:                 return "ModLfoFreq";
+        case GeneratorOperator::VibLfoDelay:                return "VibLfoDelay";
+        case GeneratorOperator::VibLfoFreq:                 return "VibLfoFreq";
         case GeneratorOperator::DelayModEnv:                return "DelayModEnv";
         case GeneratorOperator::AttackModEnv:               return "AttackModEnv";
         case GeneratorOperator::HoldModEnv:                 return "HoldModEnv";

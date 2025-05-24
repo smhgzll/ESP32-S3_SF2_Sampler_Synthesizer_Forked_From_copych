@@ -272,3 +272,9 @@ static inline float fclamp(float in, float minv, float maxv){
 static inline float pitchBendRatio(int value, float range = 2.0f) {
     return powf(2.0f, (range * (value - PITCH_BEND_CENTER) * DIV_8192) * DIV_12 );
 }
+
+static inline float fastExp2(float x) {
+    union { float f; uint32_t i; } v;
+    v.i = (uint32_t)(12102203.0f * x + 1065353216.0f);
+    return v.f;
+}

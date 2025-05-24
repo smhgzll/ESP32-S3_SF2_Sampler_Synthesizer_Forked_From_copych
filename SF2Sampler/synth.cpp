@@ -10,6 +10,10 @@
 #include <SD_MMC.h>
 #include <LittleFS.h>
 
+#ifdef ENABLE_CH_FILTER_M
+    #include "biquad2.h"
+#endif
+
 #ifdef ENABLE_CHORUS
     #include "fx_chorus.h"
     extern FxChorus chorus;
@@ -121,6 +125,9 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
         case 32: // Bank Select LSB
             state.bankLSB = val;
             break;
+        case 1:  // Mod Wheel
+            state.modWheel = fval;  
+            break;
         case 5:  // Portamento Time
             state.portaTime = fval;  
             break;
@@ -152,6 +159,12 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
                 }
             }
             break;
+        case 65: // Portamento on/off
+            {
+                bool portamento = val >= 64;
+                state.portamento = portamento;
+            }
+            break;
 #ifdef ENABLE_CH_FILTER
         case 71: // Filter Resonance
             state.filterResonance = knob_tbl[val] * (FILTER_MAX_Q - 0.5f) + 0.5f;
@@ -161,7 +174,17 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
             state.filterCutoff = knob_tbl[val] * CH_FILTER_MAX_FREQ + CH_FILTER_MIN_FREQ;
             state.recalcFilter();
             break;
+#elif defined(ENABLE_CH_FILTER_M)
+        case 71: // Filter Resonance        
+            state.filterResonance = knob_tbl[val] * (FILTER_MAX_Q - 0.5f) + 0.5f;
+            state.filterCoeffs = BiquadCalc::calcCoeffs(state.filterCutoff, state.filterResonance, BiquadCalc::LowPass);
+            break;
+        case 74: // Filter Cutoff
+            state.filterCutoff = knob_tbl[val] * CH_FILTER_MAX_FREQ + CH_FILTER_MIN_FREQ;
+            state.filterCoeffs = BiquadCalc::calcCoeffs(state.filterCutoff, state.filterResonance, BiquadCalc::LowPass);
+            break;
 #endif
+
         case 91: // Reverb Send
             state.reverbSend = fval;
             break;
@@ -209,6 +232,17 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
         return;
     }
 
+    if ((state.bankMSB == 120 || state.bankMSB == 127) && !parser.hasPreset(bank, program) ) {
+        state.setBank(128);
+        if (parser.hasPreset(bank, program)) {
+            ESP_LOGI(TAG, "Ch%u: Fallback to Program=%u, Bank=%u", ch, program, bank);
+            return;
+        } else if (parser.hasPreset(128, 0)) {
+            state.program = 0;
+            ESP_LOGI(TAG, "Ch%u: Fallback to Program=%u, Bank=%u", ch, program, bank);
+            return;
+        }
+    }
     // Fallback to Bank 0, same program
     ESP_LOGW(TAG, "Ch%u: Program %u not found in Bank %u, falling back to Bank 0", ch, program, bank);
     uint16_t fallbackBank = (bank & 0x7F00);  
@@ -379,160 +413,6 @@ void Synth::renderLRBlock(float* outL, float* outR) {
 
 
 
-
-/*
-void Synth::renderLRBlock(float* outL, float* outR) {
-    alignas(16) float dryL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float dryR[DMA_BUFFER_LEN] = {0};
-
-#ifdef ENABLE_CHORUS
-    alignas(16) float choL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float choR[DMA_BUFFER_LEN] = {0};
-#endif
-
-#ifdef ENABLE_REVERB
-    alignas(16) float revL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float revR[DMA_BUFFER_LEN] = {0};
-#endif
-
-#ifdef ENABLE_DELAY
-    alignas(16) float delL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float delR[DMA_BUFFER_LEN] = {0};
-#endif
-
-#ifdef ENABLE_CH_FILTER
-    for (int ch = 0; ch < 16; ++ch) {
-        memset(channels[ch].dryL, 0, sizeof(float) * DMA_BUFFER_LEN);
-        memset(channels[ch].dryR, 0, sizeof(float) * DMA_BUFFER_LEN);
-    }
-#endif
-
-    for (int v = 0; v < MAX_VOICES; ++v) {
-        Voice& voice = voices[v];
-        if (!voice.active) continue;
-
-        ChannelState& chan = channels[voice.channel];
-
-        float vol = 0.5f * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume;
-        float volL = voice.panL * vol;
-        float volR = voice.panR * vol;
-
-#ifdef ENABLE_CHORUS
-        float cAmt = voice.chorusAmount;
-#endif
-#ifdef ENABLE_REVERB
-        float rAmt = voice.reverbAmount;
-#endif
-#ifdef ENABLE_DELAY
-        float dAmt = chan.delaySend;
-#endif
-
-#ifdef ENABLE_CH_FILTER
-        float* dryLp = chan.dryL;
-        float* dryRp = chan.dryR;
-#else
-        float* dryLp = dryL;
-        float* dryRp = dryR;
-#endif
-
-#ifdef ENABLE_CHORUS
-        float* choLp = choL;
-        float* choRp = choR;
-#endif
-#ifdef ENABLE_REVERB
-        float* revLp = revL;
-        float* revRp = revR;
-#endif
-#ifdef ENABLE_DELAY
-        float* delLp = delL;
-        float* delRp = delR;
-#endif
-
-        for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
-            float smp = voice.nextSample();
-            float l = smp * volL;
-            float r = smp * volR;
-
-            dryLp[i] += l;
-            dryRp[i] += r;
-
-#ifdef ENABLE_CHORUS
-            float lCho = l * cAmt;
-            float rCho = r * cAmt;
-            choLp[i] += lCho;
-            choRp[i] += rCho;
-#endif
-
-#ifdef ENABLE_REVERB
-            float lSum = l;
-            float rSum = r;
-#ifdef ENABLE_CHORUS
-            lSum += lCho;
-            rSum += rCho;
-#endif
-            revLp[i] += lSum * rAmt;
-            revRp[i] += rSum * rAmt;
-#endif
-
-#ifdef ENABLE_DELAY
-            float lSumD = l;
-            float rSumD = r;
-#ifdef ENABLE_CHORUS
-            lSumD += lCho;
-            rSumD += rCho;
-#endif
-            delLp[i] += lSumD * dAmt;
-            delRp[i] += rSumD * dAmt;
-#endif
-        }
-    }
-
-#ifdef ENABLE_CH_FILTER
-    for (int ch = 0; ch < 16; ++ch) {
-        ChannelState& chan = channels[ch];
-        float* srcL = chan.dryL;
-        float* srcR = chan.dryR;
-        for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
-            float l = srcL[i];
-            float r = srcR[i];
-            chan.filter.processLR(&l, &r);
-            dryL[i] += l;
-            dryR[i] += r;
-        }
-    }
-#endif
-
-#ifdef ENABLE_CHORUS
-    chorus.processBlock(choL, choR);
-#endif
-#ifdef ENABLE_DELAY
-    delayfx.ProcessBlock(delL, delR);
-#endif
-#ifdef ENABLE_REVERB
-    reverb.processBlock(revL, revR);
-#endif
-
-    for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
-        outL[i] = dryL[i];
-        outR[i] = dryR[i];
-#ifdef ENABLE_CHORUS
-        outL[i] += choL[i];
-        outR[i] += choR[i];
-#endif
-#ifdef ENABLE_REVERB
-        outL[i] += revL[i];
-        outR[i] += revR[i];
-#endif
-#ifdef ENABLE_DELAY
-        outL[i] += delL[i];
-        outR[i] += delR[i];
-#endif
-    }
-}
-*/
-
-
-
 Voice* Synth::findWeakestVoiceOnNote(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass) {
     Voice* weakest = nullptr;
     float weakestScore = FLT_MAX;
@@ -582,6 +462,9 @@ Voice* Synth::findWorstVoice() {
 void Synth::updateScores() {
     for (int i = 0; i < MAX_VOICES; ++i) {
         voices[i].updateScore();
+        if (!voices[i].active) continue;
+        voices[i].updatePitch();
+        voices[i].updatePitchMod();
     }
 }
 
@@ -623,21 +506,7 @@ void Synth::GMReset() {
         auto& state = channels[ch];
 
         // Reset controllers
-        state.volume = 1.0f;         // CC#7
-        state.pan = 0.5f;            // CC#10
-        state.expression = 1.0f;     // CC#11
-        state.pitchBend = 0.0f;         // Center
-        state.pitchBendRange = 2.0f;     // Default
-        state.pitchBendFactor = 1.0f; // No pitch bend
-        state.modWheel = 0.0f;
-        state.reverbSend = 0.05f;
-        state.chorusSend = 0.0f;
-        state.delaySend = 0.0f;
-        
-#ifdef ENABLE_CH_FILTER
-        state.filterCutoff = 20000.0f;
-        state.filterResonance = 0.707f;
-#endif
+        state.reset();
 
         // Reset program
         state.program = 0;
@@ -669,6 +538,29 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
         ESP_LOGI(TAG, "Received GM System On SysEx");
         return true;
     }
+    if (len==9 && 
+        data[0] == 0xF0 && 
+        data[1] == 0x43 && 
+        data[2] == 0x10 &&
+        data[3] == 0x4C && 
+        data[4] == 0x08 && 
+        data[5] == 0x00 &&
+        data[8] == 0xF7) {
+
+        uint8_t part = data[6];     // MIDI channel (0–15)
+        uint8_t mode = data[7];     // 0 = normal, 1 = drum
+
+        if (part < 16) {
+            if (mode == 0) {
+                channels[part].setBank(0);
+                ESP_LOGI(TAG, "Set MIDI channel %d to General MIDI", part);
+            } else {
+                channels[part].setBank(128);
+                ESP_LOGI(TAG, "Set MIDI channel %d to Drum Kit", part);
+            }
+        }
+    }
+
     return false;
 }
 

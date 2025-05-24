@@ -13,6 +13,9 @@ inline float velocityToGain(uint32_t velocity) {
 }
 
 void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHeader* s_, Zone* z_, ChannelState* ch) {
+  //  this->ch = ch;
+
+    modWheel         = &ch->modWheel;
     modVolume        = &ch->volume;
     modExpression    = &ch->expression;
     modPitchBendFactor = &ch->pitchBendFactor;
@@ -20,7 +23,8 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
     modSustain       = &ch->sustainPedal;
     modPortaTime     = &ch->portaTime;
     modPortamento    = &ch->portamento;
-
+    chFilter.setCoeffs(&ch->filterCoeffs);
+    chFilter.resetState();
     note     = note_;
     velocity = velocity_;
     channel  = channel_;
@@ -38,12 +42,17 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
     velocityVolume = velocityToGain(velocity) * z_->attenuation;
 
     // Root key calculation
+    // cheat:
+    float modEnvStaticTune =  (z_->modAttackTime < 1.0f) ? z_->modEnvToPitch * (1.0f / 100.0f) : 0.0f;
+
     int rootKey = (z_->rootKey >= 0) ? z_->rootKey : s_->originalPitch;
     float semi = float(note_ - rootKey) + (s_->pitchCorrection * 0.01f) + z_->coarseTune + z_->fineTune;
 
     // Pitch increment base calculation
-    float noteRatio = exp2f(semi * DIV_12); // DIV_12 = 1.0f / 12.0f
+    float noteRatio = exp2f((modEnvStaticTune + semi) * DIV_12); // DIV_12 = 1.0f / 12.0f
     float baseStep = float(sample->sampleRate) * DIV_SAMPLE_RATE; // DIV_SAMPLE_RATE = 1.0f / SAMPLE_RATE
+
+ 
     basePhaseIncrement = baseStep * noteRatio;
 
     // Handle portamento setup
@@ -57,6 +66,17 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
 
         currentPhaseIncrement = isLegato ? currentPhaseIncrement : targetPhaseIncrement;
     }
+
+    // Vibrato LFO setup (zone-scoped params)
+    vibLfoPhase = 0.0f;
+    vibLfoPhaseIncrement = z_->vibLfoFreq *  DIV_SAMPLE_RATE;
+    vibLfoToPitch = z_->vibLfoToPitch;  // in cents
+    if (vibLfoToPitch == 0.0f) vibLfoToPitch = 50.0f; // prevent zero effect
+    vibLfoDelaySamples = z_->vibLfoDelay * SAMPLE_RATE;
+    vibLfoCounter = 0;
+    vibLfoActive = false;
+
+    effectivePhaseIncrement = currentPhaseIncrement;
 
     // Final reverb and chorus sends
     reverbAmount  = z_->reverbSend  * ch->reverbSend;
@@ -133,7 +153,7 @@ float __attribute__((always_inline)) Voice::nextSample() {
         return 0.0f;
     }
 
-    updatePitch();
+    // updatePitch();
 
     // Portamento smoothing
     if (portamentoActive) {
@@ -146,6 +166,7 @@ float __attribute__((always_inline)) Voice::nextSample() {
             currentPhaseIncrement += (delta >= 0.0f) ? portamentoRate : -portamentoRate;
         }
     }
+    effectivePhaseIncrement = currentPhaseIncrement * pitchMod;
 
     // Phase wrapping / voice lifetime control
     bool endReached = false;
@@ -202,11 +223,27 @@ float __attribute__((always_inline)) Voice::nextSample() {
     float smp = interp * ONE_DIV_32768;
 
     // Phase advance
-    if (loopType == PING_PONG_LOOP) {
-        phase += (forward ? currentPhaseIncrement : -currentPhaseIncrement);
+
+    if (!vibLfoActive) {
+        if (++vibLfoCounter >= vibLfoDelaySamples) {
+            vibLfoActive = true;
+            vibLfoCounter = vibLfoDelaySamples;  // clamp (optional)
+        }
     } else {
-        phase += currentPhaseIncrement;
+        vibLfoPhase += vibLfoPhaseIncrement;
+        if (vibLfoPhase >= 1.0f)
+            vibLfoPhase -= 1.0f;
     }
+
+    
+    if (loopType == PING_PONG_LOOP) {
+        phase += (forward ? effectivePhaseIncrement : -effectivePhaseIncrement);
+    } else {
+        phase += effectivePhaseIncrement;
+    }
+
+
+
 
     // Envelope process
     float env = ampEnv.process();
@@ -216,101 +253,20 @@ float __attribute__((always_inline)) Voice::nextSample() {
         currentPhaseIncrement = targetPhaseIncrement;  // reset immediately
         return 0.0f;
     }
+    
+    float val = smp * velocityVolume * env * (*modVolume) * (*modExpression);
 
-#ifdef ENABLE_IN_CHANNEL_FILTERS
-    return filter.process(smp) * env * velocityVolume;
-#else
-    return smp * env * velocityVolume;
+#ifdef ENABLE_IN_VOICE_FILTERS
+    val = filter.process(val);
 #endif
-}
 
-/*
-
-float Voice::nextSample() {
-    if (!sample) {
-        active = false;
-        return 0.0f;
-    }
-
-    updatePitch();
-
-    // Portamento
-    if (portamentoActive) {
-        float delta = targetPhaseIncrement - currentPhaseIncrement;
-        if (__builtin_fabsf(delta) <= portamentoRate) {
-            currentPhaseIncrement = targetPhaseIncrement;
-            portamentoActive = false;
-        } else {
-            currentPhaseIncrement += (delta >= 0.0f) ? portamentoRate : -portamentoRate;
-        }
-    }
-
-    // Loop handling
-    switch (loopType) {
-        case FORWARD_LOOP:
-            if (phase >= loopEnd)
-                phase -= loopLength;
-            break;
-
-        case SUSTAIN_LOOP:
-            if (ampEnv.getCurrentSegment() != Adsr::ADSR_SEG_RELEASE) {
-                if (phase >= loopEnd)
-                    phase -= loopLength;
-            } else if (phase >= length) {
-                active = false;
-                return 0.0f;
-            }
-            break;
-
-        case PING_PONG_LOOP:
-            if (forward) {
-                if (phase >= loopEnd) {
-                    phase = __builtin_fmaf(-1.0f, phase - loopEnd, loopEnd * 2.0f);  // phase = 2*loopEnd - phase
-                    forward = false;
-                }
-            } else {
-                if (phase <= loopStart) {
-                    phase = __builtin_fmaf(-1.0f, loopStart - phase, loopStart * 2.0f);  // phase = 2*loopStart - phase
-                    forward = true;
-                }
-            }
-            break;
-
-        case NO_LOOP:
-        default:
-            if (phase >= length) {
-                active = false;
-                return 0.0f;
-            }
-            break;
-    }
-
-    // Sample interpolation (linear)
-    uint32_t idx = (uint32_t)phase;
-    float frac = phase - (float)idx;
-
-    float s0 = data[idx > 0 ? idx - 1 : 0];
-    float s1 = data[idx];
-    float interp = __builtin_fmaf((s1 - s0), frac, s0);  // s0 + (s1 - s0) * frac
-    float smp = interp * ONE_DIV_32768;
-
-    // Phase increment
-    phase += (loopType == PING_PONG_LOOP && !forward) ? -currentPhaseIncrement : currentPhaseIncrement;
-
-    // Envelope
-    float env = ampEnv.process();
-    if (ampEnv.isIdle()) {
-        active = false;
-        currentPhaseIncrement = targetPhaseIncrement;
-    }
-
-#ifdef ENABLE_IN_CHANNEL_FILTERS
-    return filter.process(smp) * env * velocityVolume;
-#else
-    return smp * env * velocityVolume;
+#ifdef ENABLE_CH_FILTER_M
+    val = chFilter.process(val);
 #endif
+
+    return val;
+
 }
-*/
 
 void Voice::renderBlock(float* block) {
     for (uint32_t i = 0; i < DMA_BUFFER_LEN; i++) {
@@ -357,6 +313,20 @@ void Voice::updatePortamento() {
     }
     updatePitch();
 }
+
+void Voice::updatePitchMod() {
+    if (!vibLfoActive) {
+        pitchMod = 1.0f;
+        return;
+    }
+
+    float lfo = sin_lut(vibLfoPhase);
+    float modDepth = *modWheel;  // FIXED: no double normalization
+
+    float cents = lfo * modDepth * vibLfoToPitch;
+    pitchMod = fastExp2(cents * (1.0f / 1200.0f));
+}
+
 
 void Voice::init() {
     active = false;
