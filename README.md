@@ -105,10 +105,10 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ---
 
 ## Links
-
-- [Project Repository](https://github.com/copych/SF2_Sampler)
+- [Free SoundFonts](https://github.com/ZmeyKolbasnik/Instruments/tree/master)
 - [ESP32-S3 Documentation](https://www.espressif.com/en/products/socs/esp32-s3)
 - [SoundFont 2 Specification](https://en.wikipedia.org/wiki/SoundFont)
+- [ESP Partition Excel calculator](https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer/tree/main/partitions)
 
 ---
 
