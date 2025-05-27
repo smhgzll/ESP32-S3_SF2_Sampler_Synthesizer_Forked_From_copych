@@ -1,3 +1,28 @@
+/*
+ * ----------------------------------------------------------------------------
+ * ESP32-S3 SF2 Synthesizer Firmware
+ * 
+ * Description:
+ *   Real-time SF2 (SoundFont) compatible wavetable synthesizer with USB MIDI, I2S audio,
+ *   multi-layer voice allocation, per-channel filters, reverb, chorus and delay.
+ *   GM/GS/XG support is partly implemented
+ * 
+ * Hardware:
+ *   - ESP32-S3 with PSRAM
+ *   - I2S DAC output (44100Hz stereo, 16-bit PCM)
+ *   - USB MIDI input
+ *   - Optional SD card and/or LittleFS
+ * 
+ * Author: Evgeny Aslovskiy AKA Copych
+ * License: MIT
+ * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
+ * 
+ * File: SF2Parser.h
+ * Purpose: SF2 file parser class header.
+ * ----------------------------------------------------------------------------
+ */
+
+
 #pragma once
 #include <Arduino.h>
 #include <FS.h>
@@ -61,7 +86,7 @@ struct Zone {    // --- Обязательные параметры ---
     float modAttackTime = 0.0f;
     float modReleaseTime = 0.0f;
     float modDecayTime = -0.1f;
-    float modSustainLevel = 1.0f;
+    float modSustainLevel = 0.0f;
     float attenuation = 1.0f;
     float modEnvToPitch = 0.0f;
 
@@ -116,7 +141,7 @@ public:
     SF2Parser(const char* path, fs::FS* fs = &LittleFS);
     bool parse();
     std::vector<SampleHeader>& getSamples();
-    Zone* getZoneForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program);
+    std::vector<Zone> getZonesForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program);
     std::vector<SF2Preset> & getPresets() { return presets; } 
     void dumpPresetStructure() ;
     bool hasPreset(uint16_t bank, uint16_t program) const ;

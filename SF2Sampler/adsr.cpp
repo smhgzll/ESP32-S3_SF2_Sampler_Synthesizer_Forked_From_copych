@@ -1,3 +1,6 @@
+/*
+* AHDSR Envelope Generator
+*/
 #include "adsr.h"
 #include <math.h>
 

@@ -1,3 +1,7 @@
+/*
+* I2S_Audio.cpp
+* I2S_Audio class by copych
+*/
 #include "i2s_in_out.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h" 

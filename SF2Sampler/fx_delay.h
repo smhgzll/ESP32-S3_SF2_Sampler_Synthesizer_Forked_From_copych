@@ -1,3 +1,11 @@
+/*
+* FxDelay - Delay audio effect
+* Based on Michael Licence's delay code
+*
+* Author: Evgeny Aslovskiy AKA Copych
+* License: MIT
+*/
+
 #pragma once
 
 #include "Arduino.h"

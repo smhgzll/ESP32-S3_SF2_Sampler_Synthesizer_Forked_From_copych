@@ -7,7 +7,8 @@
 * due to its improved PSRAM and memory management compared to the original ESP32. 
 * It supports external DACs like the PCM5102 for high-quality audio output and 
 * uses the built-in USB hardware of the ESP32-S3 to function as a USB MIDI device.
-* 
+* GM/GS/XG support is partlially implemented (i.e. with 2MBGMGS.sf2 bank).
+*
 * Libraries used:
 * Arduino MIDI library https://github.com/FortySevenEffects/arduino_midi_library
 * Optional. Using RGB LEDs requires FastLED library https://github.com/FastLED/FastLED

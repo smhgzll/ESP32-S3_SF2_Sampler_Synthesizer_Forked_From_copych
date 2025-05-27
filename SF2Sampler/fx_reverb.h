@@ -5,7 +5,9 @@
 * has a pre-delay setting 0..MAX_PREDELAY_MS
 * has damping setting 0..1
 * 
-*
+* May 2025
+* Author: Evgeny Aslovskiy AKA Copych
+* License: MIT
 */
 
 #pragma once

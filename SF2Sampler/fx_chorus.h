@@ -1,3 +1,12 @@
+/*
+* FxChorus - Chorus audio effect
+* based on a basic understanding of the chorus effect
+*
+* May 2025
+* Author: Evgeny Aslovskiy AKA Copych
+* License: MIT
+*/
+
 #pragma once
 #include "config.h"
 

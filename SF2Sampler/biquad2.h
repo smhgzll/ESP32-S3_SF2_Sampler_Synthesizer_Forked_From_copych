@@ -1,3 +1,20 @@
+/*
+ * ----------------------------------------------------------------------------
+ * ESP32-S3 optimized biquad filter
+ * splitted into 3 classes
+ *
+* Author: Evgeny Aslovskiy AKA Copych
+ * License: MIT
+ * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
+ * 
+ * File: biquad2.h
+ * Purpose: contains 3 classes:
+ *          Biquad filter coefficient calculator, 
+ *          Biquad filter with internal coefficients,
+ *          Biquad filter with shared coefficients
+ * ----------------------------------------------------------------------------
+ */
+
 #pragma once
 #include <Arduino.h>
 #include "config.h"

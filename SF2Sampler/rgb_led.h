@@ -1,4 +1,27 @@
-#pragma once
+/*
+ * ----------------------------------------------------------------------------
+ * ESP32-S3 SF2 Synthesizer Firmware
+ * 
+ * Description:
+ *   Real-time SF2 (SoundFont) compatible wavetable synthesizer with USB MIDI, I2S audio,
+ *   multi-layer voice allocation, per-channel filters, reverb, chorus and delay.
+ *   GM/GS/XG support is partly implemented
+ * 
+ * Hardware:
+ *   - ESP32-S3 with PSRAM
+ *   - I2S DAC output (44100Hz stereo, 16-bit PCM)
+ *   - USB MIDI input
+ *   - Optional SD card and/or LittleFS
+ * 
+ * Author: Evgeny Aslovskiy AKA Copych
+ * License: MIT
+ * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
+ * 
+ * File: rgb_led.cpp
+ * Purpose: RGB LED indication control
+ * ----------------------------------------------------------------------------
+ */
+ #pragma once
 #include <FastLED.h>
 
 #define LED_PIN     48

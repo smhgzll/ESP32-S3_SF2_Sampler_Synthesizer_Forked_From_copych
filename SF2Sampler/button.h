@@ -25,8 +25,9 @@
 *        myButton.process();
 *     }
 *
-* MIT License
-* Copyright (c) 2024 copych 
+* April 2025
+* Author: Evgeny Aslovskiy AKA Copych
+* License: MIT
 */
 
 #define ACTIVE_STATE  LOW   // LOW = switch connects to GND, HIGH = switch connects to 3V3

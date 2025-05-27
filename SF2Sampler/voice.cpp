@@ -1,3 +1,28 @@
+/*
+ * ----------------------------------------------------------------------------
+ * ESP32-S3 SF2 Synthesizer Firmware
+ * 
+ * Description:
+ *   Real-time SF2 (SoundFont) compatible wavetable synthesizer with USB MIDI, I2S audio,
+ *   multi-layer voice allocation, per-channel filters, reverb, chorus and delay.
+ *   GM/GS/XG support is partly implemented
+ * 
+ * Hardware:
+ *   - ESP32-S3 with PSRAM
+ *   - I2S DAC output (44100Hz stereo, 16-bit PCM)
+ *   - USB MIDI input
+ *   - Optional SD card and/or LittleFS
+ * 
+ * Author: Evgeny Aslovskiy AKA Copych
+ * License: MIT
+ * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
+ * 
+ * File: voice.cpp
+ * Purpose: Voice generation routines
+ * ----------------------------------------------------------------------------
+ */
+
+
 #include "voice.h"
 #include "misc.h"
 
@@ -12,93 +37,103 @@ inline float velocityToGain(uint32_t velocity) {
     //return powf(velocity, 0.6f); // 0.6 = 60% powerlaw, approximating sqrt()
 }
 
-void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHeader* s_, Zone* z_, ChannelState* ch) {
-  //  this->ch = ch;
+void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHeader* s_, Zone zone_, ChannelState* ch) {
 
-    modWheel         = &ch->modWheel;
-    modVolume        = &ch->volume;
-    modExpression    = &ch->expression;
-    modPitchBendFactor = &ch->pitchBendFactor;
-    modPan           = &ch->pan;
-    modSustain       = &ch->sustainPedal;
-    modPortaTime     = &ch->portaTime;
-    modPortamento    = &ch->portamento;
+    zone = std::move(zone_);
+    samplesRun = lastSamplesRun = 0;
+
+    modWheel            = &ch->modWheel;
+    modVolume           = &ch->volume;
+    modExpression       = &ch->expression;
+    modPitchBendFactor  = &ch->pitchBendFactor;
+    modPan              = &ch->pan;
+    modSustain          = &ch->sustainPedal;
+    modPortaTime        = &ch->portaTime;
+    modPortamento       = &ch->portamento;
+
+    int startNote = ch->portaCurrentNote;
+    ch->portaCurrentNote = note_;    
+
     chFilter.setCoeffs(&ch->filterCoeffs);
     chFilter.resetState();
     note     = note_;
     velocity = velocity_;
     channel  = channel_;
     sample   = s_;
-    zone     = z_;
     forward  = true;
     phase    = 0.0f;
     noteHeld = true;
 
     data = reinterpret_cast<int16_t*>(__builtin_assume_aligned(sample->data, 4));
 
-    exclusiveClass = z_->exclusiveClass;
+    exclusiveClass = zone.exclusiveClass;
 
     // Precompute velocity-dependent gain
-    velocityVolume = velocityToGain(velocity) * z_->attenuation;
+    velocityVolume = velocityToGain(velocity) * zone.attenuation;
+
+
 
     // Root key calculation
-    // cheat:
-    float modEnvStaticTune =  (z_->modAttackTime < 1.0f) ? z_->modEnvToPitch * (1.0f / 100.0f) : 0.0f;
+    // cheat for SF2 , as we are not processing modEnvelope, but want to be in tune:
+    float modEnvStaticTune =  (zone.modAttackTime < 1.0f) ? ( 1.0f - zone.modSustainLevel) * zone.modEnvToPitch * 0.01f : 0.0f;
+    // float modEnvStaticTune =  zone.modEnvToPitch * 0.01f ;
 
-    int rootKey = (z_->rootKey >= 0) ? z_->rootKey : s_->originalPitch;
-    float semi = float(note_ - rootKey) + (s_->pitchCorrection * 0.01f) + z_->coarseTune + z_->fineTune;
+    int rootKey = (zone.rootKey >= 0) ? zone.rootKey : s_->originalPitch;
+    float semi = float(note_ - rootKey) + (s_->pitchCorrection * 0.01f) + zone.coarseTune + zone.fineTune;
 
-    // Pitch increment base calculation
-    float noteRatio = exp2f((modEnvStaticTune + semi) * DIV_12); // DIV_12 = 1.0f / 12.0f
-    float baseStep = float(sample->sampleRate) * DIV_SAMPLE_RATE; // DIV_SAMPLE_RATE = 1.0f / SAMPLE_RATE
-
- 
+    float noteRatio = exp2f((modEnvStaticTune + semi) * DIV_12);
+    float baseStep = float(sample->sampleRate) * DIV_SAMPLE_RATE;
     basePhaseIncrement = baseStep * noteRatio;
-
-    // Handle portamento setup
+    
     portamentoActive = modPortamento && *modPortamento;
 
-    currentPhaseIncrement = basePhaseIncrement * (*modPitchBendFactor);
     if (portamentoActive) {
-        float timeSec = 0.01f + (*modPortaTime) * 0.5f; // Portamento time: 10ms to 510ms
-        portamentoRate = 1.0f / (timeSec * SAMPLE_RATE);
-        setPortamentoTarget(basePhaseIncrement * (*modPitchBendFactor));
+        float noteDiff = float( note_ - startNote);              // in semitones
+        float freqRatio = exp2f(noteDiff * DIV_12);              // frequency ratio
 
-        currentPhaseIncrement = isLegato ? currentPhaseIncrement : targetPhaseIncrement;
-    }
+        float timeSec = 0.01f + (*modPortaTime) * 0.5f;         // avoid zero
+        float totalSamples = timeSec * SAMPLE_RATE;
+        currentPhaseIncrement = basePhaseIncrement / freqRatio;
+        portamentoFactor = 1.0f / freqRatio;
+        portamentoLogDelta = exp2f(log2f(freqRatio) / totalSamples);
+    } else {
+        currentPhaseIncrement = basePhaseIncrement;
+        portamentoLogDelta = 1.0f;
+        portamentoFactor = 1.0f;
+    } 
 
     // Vibrato LFO setup (zone-scoped params)
     vibLfoPhase = 0.0f;
-    vibLfoPhaseIncrement = z_->vibLfoFreq *  DIV_SAMPLE_RATE;
-    vibLfoToPitch = z_->vibLfoToPitch;  // in cents
+    vibLfoPhaseIncrement = zone.vibLfoFreq *  DIV_SAMPLE_RATE;
+    vibLfoToPitch = zone.vibLfoToPitch;  // in cents
     if (vibLfoToPitch == 0.0f) vibLfoToPitch = 50.0f; // prevent zero effect
-    vibLfoDelaySamples = z_->vibLfoDelay * SAMPLE_RATE;
+    vibLfoDelaySamples = zone.vibLfoDelay * SAMPLE_RATE;
     vibLfoCounter = 0;
     vibLfoActive = false;
 
-    effectivePhaseIncrement = currentPhaseIncrement;
+    updatePitch();
 
     // Final reverb and chorus sends
-    reverbAmount  = z_->reverbSend  * ch->reverbSend;
-    chorusAmount  = z_->chorusSend  * ch->chorusSend;
+    reverbAmount  = zone.reverbSend  * ch->reverbSend;
+    chorusAmount  = zone.chorusSend  * ch->chorusSend;
 
     // Apply pan from modPan (pointer to ChannelState pan)
     updatePan();
 
     // Setup ADSR envelope
-    ampEnv.setAttackTime(z_->attackTime);
-    ampEnv.setDecayTime(z_->decayTime);
-    ampEnv.setHoldTime(z_->holdTime);
-    ampEnv.setSustainLevel(z_->sustainLevel);
-    ampEnv.setReleaseTime(z_->releaseTime);
+    ampEnv.setAttackTime(zone.attackTime);
+    ampEnv.setDecayTime(zone.decayTime);
+    ampEnv.setHoldTime(zone.holdTime);
+    ampEnv.setSustainLevel(zone.sustainLevel);
+    ampEnv.setReleaseTime(zone.releaseTime);
     ampEnv.retrigger(Adsr::END_NOW);
 
     // Loop setup
-    int32_t loopStartOffset = z_->loopStartOffset + (z_->loopStartCoarseOffset << 15); // x32768
-    int32_t loopEndOffset   = z_->loopEndOffset   + (z_->loopEndCoarseOffset   << 15); // x32768
+    int32_t loopStartOffset = zone.loopStartOffset + (zone.loopStartCoarseOffset << 15); // x32768
+    int32_t loopEndOffset   = zone.loopEndOffset   + (zone.loopEndCoarseOffset   << 15); // x32768
 
     length    = sample->end - sample->start;
-    loopType  = static_cast<LoopType>(z_->sampleModes & 0x0003);
+    loopType  = static_cast<LoopType>(zone.sampleModes & 0x0003);
     loopStart = sample->startLoop + loopStartOffset - sample->start;
     loopEnd   = sample->endLoop   + loopEndOffset   - sample->start;
     loopLength = loopEnd - loopStart;
@@ -110,8 +145,8 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
 
 #ifdef ENABLE_IN_VOICE_FILTERS
 	// Filter cutoff and resonance from zone
-	filterCutoff = z_->filterFc;
-	filterResonance = (z_->filterQ <= 0.0f) ? 0.707f : 1.0f / powf(10.0f, z_->filterQ / 20.0f);
+	filterCutoff = zone.filterFc;
+	filterResonance = (zone.filterQ <= 0.0f) ? 0.707f : 1.0f / powf(10.0f, zone.filterQ / 20.0f);
     filterCutoff = fclamp(filterCutoff, 10.0f, 20000.0f)
 	filter.resetState();
 	filter.setFreqAndQ(filterCutoff, filterResonance);
@@ -120,11 +155,12 @@ void Voice::start(uint8_t channel_, uint8_t note_, uint8_t velocity_, SampleHead
     active = true;
 
     ESP_LOGD(TAG, "ch=%d note=%d atk=%.5f hld=%.5f dcy=%.5f sus=%.3f rel=%.5f loopStart=%u loopEnd=%u loopType=%d",
-        channel, note, z_->attackTime, z_->holdTime, z_->decayTime, z_->sustainLevel, z_->releaseTime,
+        channel, note, zone.attackTime, zone.holdTime, zone.decayTime, zone.sustainLevel, zone.releaseTime,
         static_cast<uint32_t>(loopStart), static_cast<uint32_t>(loopEnd), loopType);
 
-    ESP_LOGD(TAG, "ch=%d reverb=%.5f chorus=%.5f delay=%.5f",
-        channel, reverbAmount, chorusAmount, ch->delaySend);
+    ESP_LOGD(TAG, "ch=%d reverb=%.5f chorus=%.5f delay=%.5f", channel, reverbAmount, chorusAmount, ch->delaySend);
+
+    ESP_LOGD(TAG, "modToPitch=%.3f modEnvSustain=%.5f coarseTune=%.3f fineTune=%.3f", zone.modEnvToPitch, zone.modSustainLevel, zone.coarseTune, zone.fineTune);
 }
 
 void Voice::stop() {
@@ -153,20 +189,9 @@ float __attribute__((always_inline)) Voice::nextSample() {
         return 0.0f;
     }
 
-    // updatePitch();
-
-    // Portamento smoothing
-    if (portamentoActive) {
-        float delta = targetPhaseIncrement - currentPhaseIncrement;
-        float absDelta = __builtin_fabsf(delta);
-        if (absDelta <= portamentoRate) {
-            currentPhaseIncrement = targetPhaseIncrement;
-            portamentoActive = false;
-        } else {
-            currentPhaseIncrement += (delta >= 0.0f) ? portamentoRate : -portamentoRate;
-        }
-    }
-    effectivePhaseIncrement = currentPhaseIncrement * pitchMod;
+    updatePitch();
+    // for syncin time-based functions (like LFOs)
+    samplesRun++;
 
     // Phase wrapping / voice lifetime control
     bool endReached = false;
@@ -223,27 +248,11 @@ float __attribute__((always_inline)) Voice::nextSample() {
     float smp = interp * ONE_DIV_32768;
 
     // Phase advance
-
-    if (!vibLfoActive) {
-        if (++vibLfoCounter >= vibLfoDelaySamples) {
-            vibLfoActive = true;
-            vibLfoCounter = vibLfoDelaySamples;  // clamp (optional)
-        }
-    } else {
-        vibLfoPhase += vibLfoPhaseIncrement;
-        if (vibLfoPhase >= 1.0f)
-            vibLfoPhase -= 1.0f;
-    }
-
-    
     if (loopType == PING_PONG_LOOP) {
         phase += (forward ? effectivePhaseIncrement : -effectivePhaseIncrement);
     } else {
         phase += effectivePhaseIncrement;
     }
-
-
-
 
     // Envelope process
     float env = ampEnv.process();
@@ -288,43 +297,43 @@ void Voice::updateScore() {
     }
 }
 
-void Voice::setPortamentoTarget(float target) {
-    targetPhaseIncrement = target;
+void __attribute__((always_inline))  Voice::updatePitchFactors() {
+    // not clean if cross-threaded, but it's granular anyway ;-)
+    float deltaSamplesRun = samplesRun - lastSamplesRun;
+    lastSamplesRun = samplesRun;
 
-    if (portamentoRate > 0.0f) {
-        portamentoActive = true;
-    } else {
-        currentPhaseIncrement = target; // snap immediately if no glide
-        portamentoActive = false;
-    }
-}
-
-void Voice::updatePortamento() {
-    if (!portamentoActive) return;
-
-    float diff = targetPortamentoFactor - portamentoFactor;
-
-    // If the difference is small, snap to the target
-    if (fabsf(diff) < 0.0001f) {
-        portamentoFactor = targetPortamentoFactor;
-        portamentoActive = false;
-    } else {
-        portamentoFactor += diff * portamentoRate;
-    }
-    updatePitch();
-}
-
-void Voice::updatePitchMod() {
+    // Vibrato LFO
     if (!vibLfoActive) {
+        vibLfoCounter += deltaSamplesRun;
+        if (vibLfoCounter >= vibLfoDelaySamples)
+            vibLfoActive = true;
         pitchMod = 1.0f;
-        return;
+    } else {
+        vibLfoPhase += vibLfoPhaseIncrement * deltaSamplesRun;
+        if (vibLfoPhase >= 1.0f) vibLfoPhase -= 1.0f;
+
+        float lfo = sin_lut(vibLfoPhase);
+        float cents = lfo * (*modWheel) * vibLfoToPitch;
+        pitchMod = fastExp2(cents * (1.0f * DIV_1200));
     }
 
-    float lfo = sin_lut(vibLfoPhase);
-    float modDepth = *modWheel;  // FIXED: no double normalization
+    // Portamento 
+    if (portamentoActive) {
+        portamentoFactor *= powf(portamentoLogDelta, deltaSamplesRun);
+        currentPhaseIncrement = basePhaseIncrement * portamentoFactor;
 
-    float cents = lfo * modDepth * vibLfoToPitch;
-    pitchMod = fastExp2(cents * (1.0f / 1200.0f));
+        // Stop when close enough
+        if ( (portamentoLogDelta >= 1.0f && portamentoFactor >= 1.0f) ||
+            (portamentoLogDelta <= 1.0f && portamentoFactor <= 1.0f) ) {
+            portamentoFactor = 1.0f;
+            portamentoActive = false;
+            currentPhaseIncrement = targetPhaseIncrement;
+        }
+        
+    }
+
+    // Mod LFO 
+    // modFactor = ...
 }
 
 

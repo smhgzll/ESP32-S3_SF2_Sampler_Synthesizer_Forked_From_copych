@@ -6,7 +6,7 @@
 *
 * I2S audio helper class for ESP32 family
 * I2S port 0 assumed
-* by copych 2024
+* by copych 2024-2025
 * https://gitverse.com/copych
 *
 */

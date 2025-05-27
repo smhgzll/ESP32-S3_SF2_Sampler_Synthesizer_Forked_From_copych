@@ -1,3 +1,27 @@
+/*
+ * ----------------------------------------------------------------------------
+ * ESP32-S3 SF2 Synthesizer Firmware
+ * 
+ * Description:
+ *   Real-time SF2 (SoundFont) compatible wavetable synthesizer with USB MIDI, I2S audio,
+ *   multi-layer voice allocation, per-channel filters, reverb, chorus and delay.
+ *   GM/GS/XG support is partly implemented
+ * 
+ * Hardware:
+ *   - ESP32-S3 with PSRAM
+ *   - I2S DAC output (44100Hz stereo, 16-bit PCM)
+ *   - USB MIDI input
+ *   - Optional SD card and/or LittleFS
+ * 
+ * Author: Evgeny Aslovskiy AKA Copych
+ * License: MIT
+ * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
+ * 
+ * File: SF2Parser.cpp
+ * Purpose: Implementation of SF2 file parser.
+ * ----------------------------------------------------------------------------
+ */
+
 #include "SF2Parser.h"
 #include "esp_log.h"
 #include "operators.h"
@@ -363,9 +387,9 @@ bool SF2Parser::readSampleHeaders(uint32_t offset, uint32_t size) {
     return true;
 }
 
-Zone* SF2Parser::getZoneForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program) {
-    static Zone result;
 
+std::vector<Zone> SF2Parser::getZonesForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program) {
+    std::vector<Zone> resultZones;
     for (const auto& preset : presets) {
         if (preset.bank != bank || preset.program != program) continue;
 
@@ -403,27 +427,27 @@ Zone* SF2Parser::getZoneForNote(uint8_t note, uint8_t velocity, uint16_t bank, u
                     velocity >= velLo && velocity <= velHi) {
 
                     // Clear and set initial values
-                    result = Zone{};
-                    result.sample = &samples[sampleIndex];
-                    result.keyLo = keyLo;
-                    result.keyHi = keyHi;
-                    result.velLo = velLo;
-                    result.velHi = velHi;
-                    result.rootKey = result.sample->originalPitch;
+                     
+                    Zone z{};
+                    z.sample = &samples[sampleIndex];
+                    z.keyLo = keyLo;
+                    z.keyHi = keyHi;
+                    z.velLo = velLo;
+                    z.velHi = velHi;
+                    z.rootKey = z.sample->originalPitch;
 
-                    applyGenerators(preset.globalGenerators, result);
-                    applyGenerators(pzone.generators, result);
-                    applyGenerators(inst.globalGenerators, result);
-                    applyGenerators(izone.generators, result);
+                    applyGenerators(preset.globalGenerators, z);
+                    applyGenerators(pzone.generators, z);
+                    applyGenerators(inst.globalGenerators, z);
+                    applyGenerators(izone.generators, z);
 
-                    ESP_LOGD(TAG, "Found sample for note=%u velocity=%u: %s", note, velocity, result.sample->name);
-                    return &result;
+                    ESP_LOGD(TAG, "Found sample for note=%u velocity=%u: %s", note, velocity, z.sample->name);
+                    resultZones.push_back(std::move(z));
                 }
             }
         }
     }
-
-    return nullptr;
+    return resultZones;
 }
 
 void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) {
@@ -498,7 +522,8 @@ void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) 
                 zone.modEnvToPitch = val;
                 break;
             case GeneratorOperator::SustainModEnv:
-                zone.modSustainLevel = powf(10.0f, -val / 200.0f);  // val is in centibels
+               // zone.modSustainLevel = powf(10.0f, -val / 200.0f);  // val is in centibels
+                zone.modSustainLevel = val * 0.001f ;  // map to 0..1
                 break;
             case GeneratorOperator::Pan:
                 zone.pan = val * 0.01f;

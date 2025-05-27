@@ -1,3 +1,10 @@
+/*
+* Miscellaneous constants, macros and functions
+* 
+* Author: Evgeny Aslovskiy AKA Copych
+* License: MIT
+*/
+
 #pragma once
 
 
@@ -24,6 +31,7 @@ const float DIV_63              = (1.0f / 63.0f);
 const float DIV_127             = (1.0f / 127.0f);
 const float MIDI_NORM           = (1.0f / 127.0f);
 const float DIV_128             = (1.0f / 128.0f);
+const float DIV_1200            = (1.0f / 1200.0f);
 const float DIV_8192            = (1.0f / 8192.0f);
 const float TWO_DIV_16383       = (2.0f / 16383.0f);
 const float MS_SAMPLE_RATE      = (float)SAMPLE_RATE * 0.001f;
@@ -273,8 +281,31 @@ static inline float pitchBendRatio(int value, float range = 2.0f) {
     return powf(2.0f, (range * (value - PITCH_BEND_CENTER) * DIV_8192) * DIV_12 );
 }
 
-static inline float fastExp2(float x) {
-    union { float f; uint32_t i; } v;
-    v.i = (uint32_t)(12102203.0f * x + 1065353216.0f);
+inline float fastLog2_(float x) {
+    union { float f; uint32_t i; } vx = { x };
+    float y = float(vx.i);
+    y *= 1.1920928955078125e-7f; // 1 / (1 << 23)
+    return y - 127.0f;
+}
+
+inline float fastLog2(float x) {
+    int e;
+    float m = frexpf(x, &e);  // x = m * 2^e, m ∈ [0.5, 1.0)
+    m = (m - 0.70710678f) * 1.41421356f;  // map to ~[-1, 1]
+    float approx = ((-0.34484843f * m + 2.02466578f) * m) - 0.67487759f;
+    return float(e - 1) + approx;
+}
+
+inline float fastExp2_(float x) {
+    union { uint32_t i; float f; } v;
+    v.i = (uint32_t)(x * 12102203.0f + 1065353216.0f);
     return v.f;
 }
+
+inline float fastExp2(float x) {
+    int i = int(x);
+    float f = x - i;
+    float p = 1.0f + f * (0.69314718f + f * (0.24022651f + f * 0.05550411f));
+    return ldexpf(p, i);
+}
+

@@ -1,6 +1,26 @@
-/**
-*
-*/
+/*
+ * ----------------------------------------------------------------------------
+ * ESP32-S3 SF2 Synthesizer Firmware
+ * 
+ * Description:
+ *   Real-time SF2 (SoundFont) compatible wavetable synthesizer with USB MIDI, I2S audio,
+ *   multi-layer voice allocation, per-channel filters, reverb, chorus and delay.
+ *   GM/GS/XG support is partly implemented
+ * 
+ * Hardware:
+ *   - ESP32-S3 with PSRAM
+ *   - I2S DAC output (44100Hz stereo, 16-bit PCM)
+ *   - USB MIDI input
+ *   - Optional SD card and/or LittleFS
+ * 
+ * Author: Evgeny Aslovskiy AKA Copych
+ * License: MIT
+ * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
+ * 
+ * File: synth.cpp
+ * Purpose: SF2 synthesizer core logic
+ * ----------------------------------------------------------------------------
+ */
 
 #include "synth.h"
 #include "config.h"
@@ -49,6 +69,8 @@ Synth::Synth(SF2Parser& parserRef) : parser(parserRef) {
     for (int i = 0; i < MAX_VOICES; ++i) {
         voices[i].init();
     }
+
+    volume_scaler = 1.0f / sqrtf(MAX_VOICES);
 }
 
 bool Synth::begin() {
@@ -59,29 +81,29 @@ bool Synth::begin() {
     return true;
 }
 
+
 void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     if (ch >= 16 || vel == 0) return;
-    
+
     ChannelState* chan = &channels[ch];
-    Zone* zone = parser.getZoneForNote(note, vel, chan->getBank(), chan->program);
-    
-    if (!zone || !zone->sample) return;
+    auto zones = parser.getZonesForNote(note, vel, chan->getBank(), chan->program);
+    if (zones.empty()) return;
 
-    uint32_t exclusiveClass = zone->exclusiveClass;
-    float newVelocityVolume = vel * DIV_127;
-    float newScore = newVelocityVolume;
+    for (auto& zone : zones) {
+        if (!zone.sample) continue;
 
-    Voice* v = findWeakestVoiceOnNote(ch, note, newScore, exclusiveClass);
-    if (!v) v = findWorstVoice();
+        uint32_t exclusiveClass = zone.exclusiveClass;
+        float score = vel * DIV_127;
 
-    ESP_LOGD(TAG, "ch %d note %d bend %f vol %f score %f id=%d",
-             ch, note, chan->pitchBend, newVelocityVolume, newScore, v ? v->id : -1);
+        Voice* v = findWeakestVoiceOnNote(ch, note, score, exclusiveClass);
+        if (!v) v = findWorstVoice();
 
-    if (v) {
-        // Start the voice with channel context
-        v->start(ch, note, vel, zone->sample, zone, chan);
+        if (v) {
+            v->start(ch, note, vel, zone.sample, zone, chan);
+        }
     }
 }
+
 
 
 void Synth::noteOff(uint8_t ch, uint8_t note) {
@@ -299,8 +321,8 @@ void Synth::renderLRBlock(float* outL, float* outR) {
         Voice& voice = voices[v];
         if (!voice.active) continue;
 
-        float volL = 0.5f * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panL;
-        float volR = 0.5f * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panR;
+        float volL = volume_scaler * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panL;
+        float volR = volume_scaler * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panR;
 
 #ifdef ENABLE_CHORUS
         float cAmt = voice.chorusAmount;
@@ -460,14 +482,14 @@ Voice* Synth::findWorstVoice() {
 }
 
 void Synth::updateScores() {
-    for (int i = 0; i < MAX_VOICES; ++i) {
-        voices[i].updateScore();
-        if (!voices[i].active) continue;
-        voices[i].updatePitch();
-        voices[i].updatePitchMod();
+    for (Voice& v : voices) {
+        v.updateScore();
+        if (!v.active) continue;
+        v.updatePitch();
+        v.updatePitchFactors();
     }
 }
-
+ 
 
 void Synth::reset() {
     for (int ch = 0; ch < 16; ++ch) {

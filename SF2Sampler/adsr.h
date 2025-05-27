@@ -3,6 +3,7 @@
 
 /** Distinct stages that the phase of the envelope can be located in.
 - IDLE   = located at phase location 0, and not currently running
+- HOLD    =     Third segment of envelope where phase remains constant 
 - ATTACK  = First segment of envelope where phase moves from 0 to 1
 - DECAY   = Second segment of envelope where phase moves from 1 to SUSTAIN value
 - RELEASE =     Fourth segment of envelop where phase moves from SUSTAIN to 0
@@ -15,8 +16,9 @@
 Original author(s) : Paul Batchelor
 Ported from Soundpipe by Ben Sergentanis, May 2020
 Remake by Steffan DIedrichsen, May 2021
-Modified by Copych, Jan-Jun 2024
+Modified by Copych, Jan 2024-May 2025
 Added fast and semi-fast releases
+Added HOLD phase
 */
 
 

@@ -1,3 +1,27 @@
+/*
+ * ----------------------------------------------------------------------------
+ * ESP32-S3 SF2 Synthesizer Firmware
+ * 
+ * Description:
+ *   Real-time SF2 (SoundFont) compatible wavetable synthesizer with USB MIDI, I2S audio,
+ *   multi-layer voice allocation, per-channel filters, reverb, chorus and delay.
+ *   GM/GS/XG support is partly implemented
+ * 
+ * Hardware:
+ *   - ESP32-S3 with PSRAM
+ *   - I2S DAC output (44100Hz stereo, 16-bit PCM)
+ *   - USB MIDI input
+ *   - Optional SD card and/or LittleFS
+ * 
+ * Author: Evgeny Aslovskiy AKA Copych
+ * License: MIT
+ * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
+ * 
+ * File: synth.h
+ * Purpose: SF2 synthesizer class
+ * ----------------------------------------------------------------------------
+ */
+
 #pragma once
 #include "voice.h"
 #include "SF2Parser.h"
@@ -38,9 +62,9 @@ public:
     
 private:
     
+    float volume_scaler = 0.5f ;
     int currentFileIndex = -1;
     float pitchBendRatio(int value);
-
     Voice* allocateVoice(uint8_t ch, uint8_t note, float newScore);
     Voice* findWeakestVoiceOnNote(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass);
     Voice* findWorstVoice();
