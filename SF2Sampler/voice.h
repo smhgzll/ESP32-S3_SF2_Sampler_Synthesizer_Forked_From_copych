@@ -18,145 +18,19 @@
  * Repository: https://github.com/copych/ESP32-S3_SF2_Sampler_Synthesizer
  * 
  * File: voice.h
- * Purpose: Voice generator class for SF2 synthesizer
+ * Purpose: Voice generator struct for SF2 synthesizer
  * ----------------------------------------------------------------------------
  */
 
 #pragma once
 #include <Arduino.h>
 #include "config.h"
+#include "channel.h"
 #include "misc.h"
 #include "SF2Parser.h"
 #include "adsr.h"
 #include "biquad2.h"
 
-
-struct ChannelState {
-    // Bank and Program
-    
-    float dryL[DMA_BUFFER_LEN] = {0};
-    float dryR[DMA_BUFFER_LEN] = {0};
-
-    float portaTime = 0.2f;  // CC#5 value, mapped from 0.0 to 1.0
-    float volume = 1.0f;        // CC#7, 0.0–1.0
-    float expression = 1.0f;    // CC#11, 0.0–1.0
-    float pan = 0.5f;           // CC#10, 0.0 = left, 1.0 = right
-        
-    float modWheel = 0.0f;       // CC#1, 0.0–1.0
-    
-    int portaCurrentNote = 60;
-    
-    // Effects
-    float reverbSend = 0.0f;    // CC#91, 0.0–1.0
-    float chorusSend = 0.0f;    // CC#93, 0.0–1.0
-    float delaySend = 0.0f;     // CC#95, 0.0-1.0
-
-	float attackModifier  = 0.0f;	//CC#73	-1.0 .. 1.0
-	float releaseModifier = 0.0f;	//CC#72 -1.0 .. 1.0
-
-    // Pitch bend
-    float pitchBend = 0.0f;     // -1.0 to +1.0 (centered)
-    float pitchBendRange = 2.0f; // default ±2 semitones
-    float pitchBendFactor = 1.0f;  // derived from pitchBend and pitchBendRange
-
-    // Pedals
-    uint32_t sustainPedal = false;  // CC#64
-    uint32_t portamento = false ; // CC#65
-
-	// bank / program
-    uint32_t  bankMSB = 0;     // CC#0
-    uint32_t  bankLSB = 0;     // CC#32
-    uint32_t  program = 0;     // Program Change
-    
-	// NRPN
-    struct ParamPair { uint8_t msb = 0x7F, lsb = 0x7F; };
-    ParamPair rpn;
-    ParamPair nrpn;
-	
-	// Channel Mono/Poly
-    enum MonoMode : uint8_t { Poly = 0, MonoLegato = 1, MonoRetrig = 2 };
-    MonoMode monoMode = Poly;
-
-    // Utility
-    inline uint16_t getBank() const {
-        return (bankMSB << 7) | bankLSB;
-    }
-    
-    inline void setBank(uint16_t bank) {
-        bankMSB = 0b01111111 & (bank >> 7);
-        bankLSB = 0b01111111 & bank; 
-    }
-
-    inline float getEffectiveVolume() const {
-        return volume * expression;
-    }
-
-#ifdef ENABLE_CH_FILTER
-    BiquadFilterInternalCoeffs filter;
-
-    // Filter parameters
-    float filterCutoff = 20000.0f;  // default no filtering
-    float filterResonance = 0.707f;
-    
-    inline void updateFilter(float cutoff, float resonance) {
-      filterCutoff = cutoff;
-      filterResonance = resonance;
-      filter.setFreqAndQ(cutoff, resonance);
-    }
-	
-    inline void recalcFilter() {
-        filter.setFreqAndQ(filterCutoff, filterResonance);
-    }
-    
-    inline void resetFilter() {
-      updateFilter(20000.0f, 0.707f);
-    }
-#elif defined(ENABLE_CH_FILTER_M)
-    
-    BiquadCalc::Coeffs  filterCoeffs;
-    
-    // Filter parameters
-    float filterCutoff = 20000.0f;  // default no filtering
-    float filterResonance = 0.707f;
-
-    inline void updateFilter(float cutoff, float resonance) {
-        filterCutoff = cutoff;
-        filterResonance = resonance;
-        filterCoeffs = BiquadCalc::calcCoeffs(cutoff, resonance, BiquadCalc::LowPass);
-    }
-	
-    inline void recalcFilter() {
-        filterCoeffs = BiquadCalc::calcCoeffs(filterCutoff, filterResonance, BiquadCalc::LowPass);
-    }
-    
-    inline void resetFilter() {
-      updateFilter(20000.0f, 0.707f);
-    }
-#endif
-
-
-
-    inline void reset() {
-        volume = 1.0f;         // CC#7
-        pan = 0.0f;            // CC#10
-        expression = 1.0f;     // CC#11
-        pitchBend = 0.0f;         // Center
-        pitchBendRange = 2.0f;     // Default
-        pitchBendFactor = 1.0f; // No pitch bend
-        modWheel = 0.0f;
-        reverbSend = 0.05f; // CC#91
-        chorusSend = 0.0f;  // CC#93
-        delaySend = 0.0f;   // CC#95
-        sustainPedal = false; // CC#64
-        portaTime = 0.2f;      // CC#5
-        portamento = false;    // CC#65
-        monoMode = Poly;        
-#if defined(ENABLE_CH_FILTER) || defined(ENABLE_CH_FILTER_M)
-        resetFilter();
-#endif
-      
-    }
-};
 
 enum LoopType {
     NO_LOOP = 0,
@@ -166,7 +40,7 @@ enum LoopType {
     PING_PONG_LOOP = 4 // never used
 };
 
-struct Voice {
+struct DRAM_ATTR Voice {
     float phase = 0.0f; 
     float velocityVolume = 1.0f;
     float panL = 1.0f, panR = 1.0f;
@@ -247,11 +121,9 @@ struct Voice {
     uint32_t velocity = 0;
     uint32_t channel = 0;
 
-//    void start(uint8_t channel, uint8_t note_, uint8_t velocity_, Zone zone_,  ChannelState* ch);
-
-void prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan);
-void startNew(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan);
-void startLegato(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan, bool retrig);
+    void prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan);
+    void startNew(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan);
+    void startLegato(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan, bool retrig);
 
     void stop();
     void kill();

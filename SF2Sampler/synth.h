@@ -23,6 +23,7 @@
  */
 
 #pragma once
+#include "channel.h"
 #include "voice.h"
 #include "SF2Parser.h"
 
@@ -31,7 +32,7 @@ enum class FileSystemType {
     SD
 };
 
-class Synth {
+class DRAM_ATTR Synth {
 public:
     Synth(SF2Parser& parserRef);
     bool begin();
@@ -42,6 +43,7 @@ public:
     bool handleSysEx(const uint8_t* data, size_t len); 
     void soundOff(uint8_t ch);
     void reset();
+    void applyBankProgram(uint8_t ch);
     void programChange(uint8_t channel, uint8_t program);
     void pitchBend(uint8_t ch, int value);
     void updateScores();

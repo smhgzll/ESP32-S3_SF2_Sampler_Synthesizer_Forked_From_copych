@@ -74,7 +74,6 @@ bool Synth::begin() {
     return true;
 }
 
-
 void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     if (vel == 0) {
         noteOff(ch, note);
@@ -85,12 +84,14 @@ void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     auto zones = parser.getZonesForNote(note, vel, chan->getBank(), chan->program);
     if (zones.empty()) return;
 
-    bool isMono   = chan->monoMode != ChannelState::Poly;
-    bool retrig   = chan->monoMode == ChannelState::MonoRetrig;
+    bool isMono = chan->monoMode != ChannelState::Poly;
+    bool retrig = chan->monoMode == ChannelState::MonoRetrig;
+
+    chan->pushNote(note);
     Voice* reuseV = nullptr;
 
     if (isMono) {
-        // Reuse an existing voice on this channel if present
+        // reuse existing voice for mono
         for (Voice& v : voices) {
             if (v.active && v.channel == ch) {
                 reuseV = &v;
@@ -105,32 +106,49 @@ void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
         float score = vel * DIV_127;
 
         if (isMono && reuseV) {
-            if (retrig) reuseV->kill(); // kill before retrig
-            if (!reuseV->noteHeld) { 
-                reuseV->kill();
-                reuseV->startNew(ch, note, vel, zone, chan);
-            } else {
-                reuseV->startLegato(ch, note, vel, zone, chan, retrig);
-            }
+            if (retrig) reuseV->kill();
+            reuseV->startLegato(ch, note, vel, zone, chan, retrig);
         } else {
             Voice* v = allocateVoice(ch, note, score, zone.exclusiveClass);
             if (v) v->startNew(ch, note, vel, zone, chan);
         }
     }
-}
 
+    chan->portaCurrentNote = note;
+}
 
 void Synth::noteOff(uint8_t ch, uint8_t note) {
     if (ch >= 16) return;
+    ChannelState* chan = &channels[ch];
+    chan->removeNote(note);
+
+    bool isMono = chan->monoMode != ChannelState::Poly;
+    uint8_t nextNote = chan->topNote();
+
     for (Voice& v : voices) {
-        if (v.active && v.channel == ch && v.note == note) {
-            {
+        if (!v.active || v.channel != ch) continue;
+
+        if (isMono) {
+            // Mono: kill or retrig on stack transition
+            if (!chan->hasNotes()) {
                 v.noteHeld = false;
                 v.stop();
+            } else if (v.note != nextNote) {
+                // retrig if different note
+                auto zones = parser.getZonesForNote(nextNote, 100, chan->getBank(), chan->program); // default velocity
+                if (!zones.empty()) {
+                    v.startLegato(ch, nextNote, 100, zones.front(), chan, false);
+                    chan->portaCurrentNote = nextNote;
+                }
             }
+        } else if (v.note == note) {
+            // Poly
+            v.noteHeld = false;
+            v.stop();
         }
     }
-} 
+}
+
 
 Voice*  __attribute__((always_inline))   Synth::allocateVoice(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass){
 	Voice* v = findWeakestVoiceOnNote(ch, note, newScore, exclusiveClass);
@@ -159,12 +177,11 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
     float fval = val * DIV_127;
 
     switch (ctrl) {
-
         case 0:  // Bank Select MSB
-            state.bankMSB = val;
+            state.wantBankMSB = val & 0x7F;
             break;
         case 32: // Bank Select LSB
-            state.bankLSB = val;
+            state.wantBankLSB = val & 0x7F;
             break;
         case 1:  // Mod Wheel
             state.modWheel = fval;  
@@ -276,10 +293,12 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
 		case 126: // Mono Mode On
 			// val > 0 = MonoLegato with val voices, val == 0 = MonoRetrig
 			state.monoMode = (val > 0) ? ChannelState::MonoLegato : ChannelState::MonoRetrig;
+            state.clearNoteStack() ;
 			ESP_LOGI(TAG, "CC126: Channel %u → %s", ch, (val > 0 ? "MonoLegato" : "MonoRetrig"));
 			break;
 		case 127: // Poly Mode On
 			state.monoMode = ChannelState::Poly;
+            state.clearNoteStack() ;
 			ESP_LOGI(TAG, "CC127: Channel %u → Poly", ch);
 			break;
         default:
@@ -287,59 +306,56 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
     }
 }
 
+void Synth::applyBankProgram(uint8_t ch) {
+    if (ch >= 16) return;
+    auto& state = channels[ch];
+    state.clearNoteStack(); 
+    const uint8_t program = state.wantProgram;
+    const uint16_t bank   = state.getWantBank();
+
+    // === Detect Drum Channel ===
+    if (ch == 9 || state.wantBankMSB == 127 || state.wantBankMSB == 120 || bank == 128) {
+        state.isDrum = true;
+    } else {
+        state.isDrum = false;
+    }
+
+    // === Try Requested Bank ===
+    if (parser.hasPreset(bank, program)) {
+        state.program = program;
+        state.setBank(bank);
+        ESP_LOGI(TAG, "Ch%u: Program=%u, Bank=%u (%s)", ch, program, bank, state.isDrum ? "Drum" : "Melodic");
+        return;
+    }
+
+    // === Melodic fallback: try Bank 0 ===
+    if (!state.isDrum && parser.hasPreset(0, program)) {
+        state.program = program;
+        state.setBank(0);
+        ESP_LOGW(TAG, "Ch%u: Bank %u not found, fallback to Bank 0 (Program=%u)", ch, bank, program);
+        return;
+    }
+
+    // === Final fallback: Program 0, Bank depends on drum status ===
+    const uint16_t fallbackBank = state.isDrum ? 128 : 0;
+    if (parser.hasPreset(fallbackBank, 0)) {
+        state.program = 0;
+        state.setBank(fallbackBank);
+        ESP_LOGW(TAG, "Ch%u: Fallback to Program=0, Bank=%u (%s)", ch, fallbackBank, state.isDrum ? "Drum" : "Melodic");
+    } else {
+        ESP_LOGE(TAG, "Ch%u: No valid preset for Program=%u in any known bank", ch, program);
+    }
+}
+
+
+
 void Synth::programChange(uint8_t ch, uint8_t program) {
     if (ch >= 16) return;
 
     auto& state = channels[ch];
-    state.program = program;
+    state.wantProgram = program & 0x7F;
 
-    uint16_t bank = state.getBank();
-
-    // Primary attempt
-    if (parser.hasPreset(bank, program)) {
-        ESP_LOGI(TAG, "Ch%u: Program=%u, Bank=%u", ch, program, bank);
-        return;
-    }
-
-    // drum channels
-    if ((ch == 9 || state.bankMSB == 120 || state.bankMSB == 127) && !parser.hasPreset(bank, program) ) {
-        state.setBank(128);
-        if (parser.hasPreset(bank, program)) {
-            ESP_LOGI(TAG, "Ch%u: Fallback to Program=%u, Bank=%u", ch, program, bank);
-            return;
-        } else if (parser.hasPreset(128, 0)) {
-            state.program = 0;
-            ESP_LOGI(TAG, "Ch%u: Fallback to Program=%u, Bank=%u", ch, program, bank);
-            return;
-        }
-    }
-
-    // drum channels
-    if (ch == 9 && program!=0) {
-        state.setBank(128);
-        state.program = 0;
-        return;
-    }
-
-    // Fallback to Bank 0, same program
-    ESP_LOGW(TAG, "Ch%u: Program %u not found in Bank %u, falling back to Bank 0", ch, program, bank);
-    uint16_t fallbackBank = (bank & 0x7F00);  
-    if (parser.hasPreset(fallbackBank, program)) {
-        state.setBank(fallbackBank);
-        ESP_LOGI(TAG, "Ch%u: Fallback succeeded: Program=%u, Bank=%u", ch, program, fallbackBank);
-        return;
-    }
-
-    // Final fallback to Program 0 in Bank 0
-    ESP_LOGW(TAG, "Ch%u: Program %u not found in Bank 0, falling back to Program 0", ch, program);
-    state.program = 0;
-    state.setBank(0);
-
-    if (parser.hasPreset(0, 0)) {
-        ESP_LOGI(TAG, "Ch%u: Final fallback succeeded: Program=0, Bank=0", ch);
-    } else {
-        ESP_LOGE(TAG, "Ch%u: Final fallback failed: No valid preset at Program=0, Bank=0", ch);
-    }
+    applyBankProgram(ch);
 }
 
 
@@ -490,7 +506,6 @@ void   __attribute__((hot,always_inline)) IRAM_ATTR Synth::renderLRBlock(float* 
 }
 
 
-
 Voice* Synth::findWeakestVoiceOnNote(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass) {
     Voice* weakest = nullptr;
     float weakestScore = FLT_MAX;
@@ -579,27 +594,22 @@ void Synth::allNotesOff(uint8_t ch) {
 }
 
 void Synth::GMReset() {
-    for (uint8_t ch = 0; ch < 16; ch++) {
+    for (uint8_t ch = 0; ch < 16; ++ch) {
         auto& state = channels[ch];
-
-        // Reset controllers
         state.reset();
 
-        // Reset program
-        state.program = 0;
+        // Set default program and bank requests
+        state.wantProgram = 0;
+        state.wantBankMSB = (ch == 9) ? 1 : 0; // Bank 128
+        state.wantBankLSB = 0;
 
-        // Select bank
-        if (ch == 9) {
-            state.setBank(128);  // Drum bank for channel 10
-        } else {
-            state.setBank(0);   // General MIDI bank for all other channels
-        }
-        
+        applyBankProgram(ch);
+
         allNotesOff(ch);
         soundOff(ch);
     }
 
-    ESP_LOGI(TAG, "General MIDI Reset complete, Channel 10 set to drum bank\n");
+    ESP_LOGI(TAG, "General MIDI Reset complete, Channel 10 locked to drum bank.");
 }
 
 bool Synth::handleSysEx(const uint8_t* data, size_t len) {
@@ -632,27 +642,34 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
         ESP_LOGI(TAG, "Received XG System On SysEx");
         return true;
     }
-    if (len==9 && 
-        data[0] == 0xF0 && 
-        data[1] == 0x43 && 
-        // data[2] == 0x10 &&
-        data[3] == 0x4C && 
-        data[4] == 0x08 && 
+    
+    if (len == 9 &&
+        data[0] == 0xF0 &&
+        data[1] == 0x43 &&
+        // data[2] == 0x10 (device ID)
+        data[3] == 0x4C &&
+        data[4] == 0x08 &&
         data[5] == 0x00 &&
         data[8] == 0xF7) {
 
-        uint8_t part = data[6];     // MIDI channel (0–15)
-        uint8_t mode = data[7];     // 0 = normal, 1 = drum
+        uint8_t part = data[6];     // MIDI channel 0–15
+        uint8_t mode = data[7];     // 0 = GM, 1 = Drum
 
         if (part < 16) {
+            auto& state = channels[part];
+
             if (mode == 0) {
-                channels[part].setBank(0);
-                ESP_LOGI(TAG, "Set MIDI channel %d to General MIDI", part);
+                state.wantBankMSB = 0;
+                state.wantBankLSB = 0;
+                ESP_LOGI(TAG, "XG: Ch%u set to General MIDI (Bank 0)", part);
             } else {
-                channels[part].setBank(128);
-                ESP_LOGI(TAG, "Set MIDI channel %d to Drum Kit", part);
+                state.wantBankMSB = 1;  // Bank 128
+                state.wantBankLSB = 0;
+                ESP_LOGI(TAG, "XG: Ch%u set to Drum Kit (Bank 128)", part);
             }
-			return true;
+
+            applyBankProgram(part);
+            return true;
         }
     }
 	
@@ -670,7 +687,8 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
         uint8_t part = data[5]; // 0–15 for parts 1–16
         if (part < 16) {
             bool mono = (data[7] == 0x00);
-            channels[part].monoMode = mono ? ChannelState::MonoLegato : ChannelState::Poly;
+            channels[part].monoMode = mono ? ChannelState::MonoRetrig : ChannelState::Poly;
+            channels[part].clearNoteStack() ;
             ESP_LOGI(TAG, "Received XG Mono/Poly SysEx: Part %u → %s", part + 1, mono ? "Mono" : "Poly");
             return true;
         }

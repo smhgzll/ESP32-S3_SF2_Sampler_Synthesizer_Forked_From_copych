@@ -87,9 +87,9 @@ int Voice::usage; // counts voices internally
     FxDelay     DRAM_ATTR   delayfx;
 #endif
 
-I2S_Audio   DRAM_ATTR   AudioPort(I2S_Audio::MODE_OUT);
-SF2Parser   DRAM_ATTR   parser(SF2_PATH);
-Synth       DRAM_ATTR   synth(parser);
+I2S_Audio   AudioPort(I2S_Audio::MODE_OUT);
+SF2Parser   parser(SF2_PATH);
+Synth       synth(parser);
 
 // ========================== Button ===============================================================================================
 MuxButton myButton;

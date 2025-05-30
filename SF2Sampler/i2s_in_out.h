@@ -29,7 +29,7 @@
 // use the included fclamp() to fix it if needed
 //inline float                    fclamp(float smp) { if (smp>1.0f) return 1.0f; if (smp<-1.0f) return -1.0f; return smp; }
 
-class I2S_Audio {
+class IRAM_ATTR I2S_Audio {
   
   public:
     enum eI2sMode                     { MODE_IN, MODE_OUT, MODE_IN_OUT, MODE_COUNT };
