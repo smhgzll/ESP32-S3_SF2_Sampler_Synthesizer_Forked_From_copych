@@ -21,16 +21,16 @@
   #define MALLOC_CAP MALLOC_CAP_INTERNAL
 #endif
 
-constexpr int NUM_COMBS = 4;
-constexpr int NUM_ALLPASSES = 3;
-constexpr int MAX_PREDELAY_MS = 100;
+constexpr int DRAM_ATTR NUM_COMBS = 4;
+constexpr int DRAM_ATTR NUM_ALLPASSES = 3;
+constexpr int DRAM_ATTR MAX_PREDELAY_MS = 100;
 
-const float comb_lengths[NUM_COMBS] = {3604.0f, 3112.0f, 4044.0f, 4492.0f};
-const float comb_gains[NUM_COMBS]   = {0.805f, 0.827f, 0.783f, 0.764f};
-const float comb_damping_coef[NUM_COMBS] = {0.83f, 0.9f, 1.0f, 0.8f}; 
+const DRAM_ATTR float comb_lengths[NUM_COMBS] = {3604.0f, 3112.0f, 4044.0f, 4492.0f};
+const DRAM_ATTR float comb_gains[NUM_COMBS]   = {0.805f, 0.827f, 0.783f, 0.764f};
+const DRAM_ATTR float comb_damping_coef[NUM_COMBS] = {0.83f, 0.9f, 1.0f, 0.8f}; 
 
-const float allpass_lengths[NUM_ALLPASSES] = {500.0f, 168.0f, 48.0f};
-const float allpass_gains[NUM_ALLPASSES]   = {0.707f, 0.707f, 0.707f};
+const DRAM_ATTR float allpass_lengths[NUM_ALLPASSES] = {500.0f, 168.0f, 48.0f};
+const DRAM_ATTR float allpass_gains[NUM_ALLPASSES]   = {0.707f, 0.707f, 0.707f};
 
 class FxReverb {
 public:
@@ -111,7 +111,7 @@ public:
     ESP_LOGI("Reverb", "Global damping set to %.2f", globalDamping);
   }
   
-  inline void processBlock(float* signal_l, float* signal_r) {
+  inline void  __attribute__((hot,always_inline)) IRAM_ATTR processBlock(float* signal_l, float* signal_r) {
     for (int n = 0; n < DMA_BUFFER_LEN; ++n) {
       float inSample = 0.5f * (signal_l[n] + signal_r[n]);
 
@@ -129,7 +129,7 @@ public:
     }
   }
 
-  inline void process(float* signal_l, float* signal_r) {
+  inline void  __attribute__((hot,always_inline)) IRAM_ATTR process(float* signal_l, float* signal_r) {
     // Store current input sample into predelay buffer
     float inSample = 0.5f * (*signal_l + *signal_r);
     predelayBuf[predelayPtr] = inSample;
@@ -173,7 +173,7 @@ private:
   int allpassPtr[2][NUM_ALLPASSES] = {};
   int allpassLim[2][NUM_ALLPASSES] = {};
 
-  inline float processChannel(int ch, float input) {
+  inline float  __attribute__((hot,always_inline)) IRAM_ATTR processChannel(int ch, float input) {
     float sum = 0.0f;
     for (int i = 0; i < NUM_COMBS; ++i)
       sum += doComb(ch, i, input);
@@ -183,7 +183,7 @@ private:
     return out;
   }
 
-  inline float doComb(int ch, int idx, float in) {
+  inline float  __attribute__((hot,always_inline)) IRAM_ATTR doComb(int ch, int idx, float in) {
     int& p = combPtr[ch][idx];
     float g = comb_gains[idx];
     float& store = combStore[ch][idx];
@@ -199,7 +199,7 @@ private:
   }
 
 
-  inline float doAllpass(int ch, int idx, float in) {
+  inline float  __attribute__((hot,always_inline)) IRAM_ATTR doAllpass(int ch, int idx, float in) {
     int& p = allpassPtr[ch][idx];
     float g = allpass_gains[idx];
     float* buf = allpassBuf[ch][idx];

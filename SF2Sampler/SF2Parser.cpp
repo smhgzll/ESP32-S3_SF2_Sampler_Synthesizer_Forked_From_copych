@@ -112,8 +112,9 @@ bool SF2Parser::parse() {
       ESP_LOGI(TAG, "PDTA OK");
     }
     if (!loadSampleDataToMemory()) {
-        ESP_LOGE(TAG, "Failed to load sample data into memory");
-        return false;
+        ESP_LOGE(TAG, "Failed to load all sample data into memory, some samples may not play");
+        //optionally bind all absent samples to the first sample
+        //return false;
     } else {
         ESP_LOGI(TAG, "Memory load OK");
     }
@@ -387,9 +388,9 @@ bool SF2Parser::readSampleHeaders(uint32_t offset, uint32_t size) {
     return true;
 }
 
-
 std::vector<Zone> SF2Parser::getZonesForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program) {
     std::vector<Zone> resultZones;
+
     for (const auto& preset : presets) {
         if (preset.bank != bank || preset.program != program) continue;
 
@@ -404,6 +405,7 @@ std::vector<Zone> SF2Parser::getZonesForNote(uint8_t note, uint8_t velocity, uin
             if (instIndex < 0 || instIndex >= instruments.size()) continue;
 
             const auto& inst = instruments[instIndex];
+
             for (const auto& izone : inst.zones) {
                 int sampleIndex = -1;
                 uint8_t keyLo = 0, keyHi = 127;
@@ -426,8 +428,6 @@ std::vector<Zone> SF2Parser::getZonesForNote(uint8_t note, uint8_t velocity, uin
                     note >= keyLo && note <= keyHi &&
                     velocity >= velLo && velocity <= velHi) {
 
-                    // Clear and set initial values
-                     
                     Zone z{};
                     z.sample = &samples[sampleIndex];
                     z.keyLo = keyLo;
@@ -436,19 +436,25 @@ std::vector<Zone> SF2Parser::getZonesForNote(uint8_t note, uint8_t velocity, uin
                     z.velHi = velHi;
                     z.rootKey = z.sample->originalPitch;
 
+                    // Apply generator hierarchy
                     applyGenerators(preset.globalGenerators, z);
                     applyGenerators(pzone.generators, z);
                     applyGenerators(inst.globalGenerators, z);
                     applyGenerators(izone.generators, z);
 
-                    ESP_LOGD(TAG, "Found sample for note=%u velocity=%u: %s", note, velocity, z.sample->name);
+                    ESP_LOGD(TAG, "Mapped: note=%u velocity=%u -> sample=%s", note, velocity, z.sample->name);
                     resultZones.push_back(std::move(z));
                 }
             }
         }
     }
+
     return resultZones;
 }
+
+
+
+
 
 void SF2Parser::applyGenerators(const std::vector<Generator>& gens, Zone& zone) {
     for (const auto& g : gens) {
@@ -618,8 +624,10 @@ void SF2Parser::dumpPresetStructure() {
 
                             for (const auto& g : izone.generators) {
                                 GeneratorOperator iop = toGeneratorOperator(g.oper);
-                                ESP_LOGI(TAG, "          Gen %s = %d", toString(iop), g.amount.sAmount);
-
+                                if (iop == GeneratorOperator::Instrument || iop == GeneratorOperator::SampleID
+                                 || iop == GeneratorOperator::KeyRange || iop == GeneratorOperator::VelRange) {
+                                    ESP_LOGI(TAG, "          Gen %s = %d", toString(iop), g.amount.sAmount);
+                                }
                                 if (iop == GeneratorOperator::SampleID) {
                                     sample = resolveSample(g.amount.uAmount);
                                 } else if (iop == GeneratorOperator::KeyRange) {
@@ -655,7 +663,6 @@ bool SF2Parser::loadSampleDataToMemory() {
     }
 
     file.seek(sdtaOffset);
-
     char id[5] = {0};
     file.readBytes(id, 4);
 
@@ -670,31 +677,58 @@ bool SF2Parser::loadSampleDataToMemory() {
 
     ESP_LOGI(TAG, "Reading sample data: offset=%u size=%u", smplStart, smplSize);
 
+    SampleHeader* fallback = nullptr;
+
     for (size_t i = 0; i < samples.size(); ++i) {
         auto& s = samples[i];
-        uint32_t length = s.end > s.start ? s.end - s.start : 0;
+        uint32_t length = (s.end > s.start) ? (s.end - s.start) : 0;
 
         if (length == 0) {
             ESP_LOGW(TAG, "Sample %zu (%s) has zero length", i, s.name);
             continue;
         }
-        // s.data = (uint8_t*)heap_caps_malloc(length * sizeof(int16_t), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+
         s.data = (uint8_t*)heap_caps_aligned_alloc(4, length * sizeof(int16_t), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
 
         if (!s.data) {
             ESP_LOGE(TAG, "PSRAM allocation failed for sample %zu (%s), size=%u", i, s.name, length * 2);
-            return false;
+
+            if (fallback) {
+                // Fallback: bind to first loaded sample
+                s.data = fallback->data;
+                s.dataSize = fallback->dataSize;
+                s.start = fallback->start;
+                s.end = fallback->end;
+                s.startLoop = fallback->startLoop;
+                s.endLoop = fallback->endLoop;
+                s.sampleRate = fallback->sampleRate;
+                s.originalPitch = fallback->originalPitch;
+                s.pitchCorrection = fallback->pitchCorrection;
+                s.sampleLink = fallback->sampleLink;
+                s.sampleType = fallback->sampleType;
+
+                ESP_LOGW(TAG, "Sample %zu (%s) will use fallback sample", i, s.name);
+                continue;
+            } else {
+                ESP_LOGE(TAG, "No fallback sample available — aborting");
+                return false;
+            }
         }
 
-        file.seek(smplStart + s.start * 2); // 16-bit PCM samples
+        file.seek(smplStart + s.start * 2); // 16-bit PCM
         file.read((uint8_t*)s.data, length * 2);
         s.dataSize = length * 2;
 
         ESP_LOGD(TAG, "Loaded sample %zu: %s (offset=%u length=%u)", i, s.name, s.start, length);
+
+        if (!fallback)
+            fallback = &s;
     }
 
     return true;
 }
+
+
 
 void SF2Parser::clear() {
     for (auto& sample : samples) {

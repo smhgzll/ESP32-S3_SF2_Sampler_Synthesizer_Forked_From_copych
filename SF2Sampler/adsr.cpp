@@ -201,7 +201,7 @@ void Adsr::setTimeConstant(float timeInS, float& time, float& coeff) {
 }
 
 
-float Adsr::process() {
+float __attribute__((hot, always_inline)) IRAM_ATTR Adsr::process() {
   float out = 0.0f;
   switch (mode_) {
     case ADSR_SEG_IDLE:

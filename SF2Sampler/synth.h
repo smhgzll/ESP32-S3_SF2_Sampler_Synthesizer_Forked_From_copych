@@ -26,11 +26,6 @@
 #include "voice.h"
 #include "SF2Parser.h"
 
-struct RPNState {
-    uint8_t msb = 127;
-    uint8_t lsb = 127;
-};
-
 enum class FileSystemType {
     LITTLEFS,
     SD
@@ -65,7 +60,7 @@ private:
     float volume_scaler = 0.5f ;
     int currentFileIndex = -1;
     float pitchBendRatio(int value);
-    Voice* allocateVoice(uint8_t ch, uint8_t note, float newScore);
+    Voice* allocateVoice(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass);
     Voice* findWeakestVoiceOnNote(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass);
     Voice* findWorstVoice();
 
@@ -74,7 +69,6 @@ private:
     SF2Parser& parser;
     
     ChannelState channels[16];
-    RPNState rpnState[16]; // One per MIDI channel
 
     fs::FS* getFileSystem() ;
 

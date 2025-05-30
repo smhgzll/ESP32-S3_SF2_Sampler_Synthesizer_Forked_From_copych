@@ -18,7 +18,7 @@
 * More info:
 * https://github.com/copych/SF2_Sampler
 */
-
+#pragma packed(4)
 #pragma GCC optimize ("O3")
 #pragma GCC optimize ("fast-math")
 #pragma GCC optimize ("unsafe-math-optimizations")
@@ -87,7 +87,7 @@ int Voice::usage; // counts voices internally
     FxDelay     DRAM_ATTR   delayfx;
 #endif
 
-I2S_Audio   DRAM_ATTR   AudioPort;
+I2S_Audio   DRAM_ATTR   AudioPort(I2S_Audio::MODE_OUT);
 SF2Parser   DRAM_ATTR   parser(SF2_PATH);
 Synth       DRAM_ATTR   synth(parser);
 
@@ -149,10 +149,15 @@ void handleSystemExclusive( uint8_t* data, size_t len) {
 
 #ifdef TASK_BENCHMARKING
 // globals to be unsafely shared between tasks
-    uint64_t total_render = 0;
-    uint64_t total_write  = 0;
-    uint32_t frame_count  = 0;
+    uint32_t DRAM_ATTR t0,t1,t2,t3,t4,t5,t6;
+    uint32_t DRAM_ATTR dt1,dt2,dt3,dt4,dt5,dt6;
+    uint32_t DRAM_ATTR total_render = 0;
+    uint32_t DRAM_ATTR total_write  = 0;
+    uint32_t DRAM_ATTR frame_count  = 0;
 #endif
+
+    float DRAM_ATTR blockL[DMA_BUFFER_LEN];
+    float DRAM_ATTR blockR[DMA_BUFFER_LEN];
 
 // ========================== Core 0 Task ===============================================================================================
 // Core0 task -- AUDIO
@@ -160,14 +165,12 @@ static void IRAM_ATTR audio_task1(void *userData) {
     vTaskDelay(20); 
     ESP_LOGI(TAG, "Starting Task1");
 
-    alignas(16) float blockL[DMA_BUFFER_LEN];
-    alignas(16) float blockR[DMA_BUFFER_LEN];
 
 
     while (true) {
         
 #ifdef TASK_BENCHMARKING
-        uint32_t t0 = esp_cpu_get_cycle_count();
+        t0 = esp_cpu_get_cycle_count();
 #endif
 
 
@@ -175,7 +178,7 @@ static void IRAM_ATTR audio_task1(void *userData) {
 
 
 #ifdef TASK_BENCHMARKING
-        uint32_t t1 = esp_cpu_get_cycle_count();
+        t1 = esp_cpu_get_cycle_count();
 #endif
 
 
@@ -183,7 +186,7 @@ static void IRAM_ATTR audio_task1(void *userData) {
 
 
 #ifdef TASK_BENCHMARKING
-        uint32_t t2 = esp_cpu_get_cycle_count();
+        t2 = esp_cpu_get_cycle_count();
 
         total_render += (t1 - t0);
         total_write  += (t2 - t1);
@@ -286,12 +289,14 @@ void setup() {
  
     synth.begin();
 
+
+
 #ifdef ENABLE_RGB_LED
     setupLed();
     ESP_LOGI(TAG, "RGB LED started");
 #endif
 
-    AudioPort.init(I2S_Audio::MODE_IN_OUT);
+    AudioPort.init(I2S_Audio::MODE_OUT);
     ESP_LOGI(TAG, "I2S Audio port started");
 
     ESP_LOGI(TAG, "Reverb started");

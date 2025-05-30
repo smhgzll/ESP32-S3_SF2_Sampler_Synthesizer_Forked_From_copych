@@ -29,7 +29,7 @@ public:
         setBaseDelay(0.03f);
     }
     
-    inline void processBlock(float* left, float* right) {
+    inline void  __attribute__((hot,always_inline)) IRAM_ATTR processBlock(float* left, float* right) {
         for (int n = 0; n < DMA_BUFFER_LEN; ++n) {
             if (++updateCounter > LFO_UPDATE_INTERVAL) {
                 updateCounter = 0;

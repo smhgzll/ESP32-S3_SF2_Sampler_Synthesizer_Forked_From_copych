@@ -153,7 +153,7 @@ void I2S_Audio::deInit() {
 }
 
 
-void I2S_Audio::readBuffer(BUF_TYPE* buf) {
+void   I2S_Audio::readBuffer(BUF_TYPE* buf) {
 	size_t bytes_read = 0;
 	int32_t err = 0;
 #ifdef USE_V3
@@ -168,7 +168,7 @@ void I2S_Audio::readBuffer(BUF_TYPE* buf) {
 	_read_remain_smp = bytes_read / WHOLE_SAMPLE_BYTES;
 }
 
-void I2S_Audio::writeBuffer(BUF_TYPE* buf){
+void   I2S_Audio::writeBuffer(BUF_TYPE* buf){
 	size_t bytes_written = 0;
 	int32_t err = 0;
 #ifdef USE_V3 

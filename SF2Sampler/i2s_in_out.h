@@ -35,6 +35,7 @@ class I2S_Audio {
     enum eI2sMode                     { MODE_IN, MODE_OUT, MODE_IN_OUT, MODE_COUNT };
     enum eChannel                     { CH_LEFT, CH_RIGHT, CH_COUNT };
     I2S_Audio()                       {_i2s_mode = MODE_IN_OUT; }
+    I2S_Audio(eI2sMode m_)            {_i2s_mode = m_; }
     ~I2S_Audio()                      { deInit(); }
  
 

@@ -30,6 +30,7 @@
 #include "adsr.h"
 #include "biquad2.h"
 
+
 struct ChannelState {
     // Bank and Program
     
@@ -50,6 +51,9 @@ struct ChannelState {
     float chorusSend = 0.0f;    // CC#93, 0.0–1.0
     float delaySend = 0.0f;     // CC#95, 0.0-1.0
 
+	float attackModifier  = 0.0f;	//CC#73	-1.0 .. 1.0
+	float releaseModifier = 0.0f;	//CC#72 -1.0 .. 1.0
+
     // Pitch bend
     float pitchBend = 0.0f;     // -1.0 to +1.0 (centered)
     float pitchBendRange = 2.0f; // default ±2 semitones
@@ -59,10 +63,20 @@ struct ChannelState {
     uint32_t sustainPedal = false;  // CC#64
     uint32_t portamento = false ; // CC#65
 
+	// bank / program
     uint32_t  bankMSB = 0;     // CC#0
     uint32_t  bankLSB = 0;     // CC#32
     uint32_t  program = 0;     // Program Change
     
+	// NRPN
+    struct ParamPair { uint8_t msb = 0x7F, lsb = 0x7F; };
+    ParamPair rpn;
+    ParamPair nrpn;
+	
+	// Channel Mono/Poly
+    enum MonoMode : uint8_t { Poly = 0, MonoLegato = 1, MonoRetrig = 2 };
+    MonoMode monoMode = Poly;
+
     // Utility
     inline uint16_t getBank() const {
         return (bankMSB << 7) | bankLSB;
@@ -99,7 +113,7 @@ struct ChannelState {
     }
 #elif defined(ENABLE_CH_FILTER_M)
     
-    BiquadCalc::Coeffs filterCoeffs;
+    BiquadCalc::Coeffs  filterCoeffs;
     
     // Filter parameters
     float filterCutoff = 20000.0f;  // default no filtering
@@ -123,22 +137,22 @@ struct ChannelState {
 
 
     inline void reset() {
-      volume = 1.0f;         // CC#7
-      pan = 0.0f;            // CC#10
-      expression = 1.0f;     // CC#11
-      pitchBend = 0.0f;         // Center
-      pitchBendRange = 2.0f;     // Default
-      pitchBendFactor = 1.0f; // No pitch bend
-      modWheel = 0.0f;
-      reverbSend = 0.05f; // CC#91
-      chorusSend = 0.0f;  // CC#93
-      delaySend = 0.0f;   // CC#95
-      sustainPedal = false; // CC#64
-      portaTime = 0.2f;      // CC#5
-      portamento = false;    // CC#65
-
+        volume = 1.0f;         // CC#7
+        pan = 0.0f;            // CC#10
+        expression = 1.0f;     // CC#11
+        pitchBend = 0.0f;         // Center
+        pitchBendRange = 2.0f;     // Default
+        pitchBendFactor = 1.0f; // No pitch bend
+        modWheel = 0.0f;
+        reverbSend = 0.05f; // CC#91
+        chorusSend = 0.0f;  // CC#93
+        delaySend = 0.0f;   // CC#95
+        sustainPedal = false; // CC#64
+        portaTime = 0.2f;      // CC#5
+        portamento = false;    // CC#65
+        monoMode = Poly;        
 #if defined(ENABLE_CH_FILTER) || defined(ENABLE_CH_FILTER_M)
-      resetFilter();
+        resetFilter();
 #endif
       
     }
@@ -147,8 +161,9 @@ struct ChannelState {
 enum LoopType {
     NO_LOOP = 0,
     FORWARD_LOOP = 1,
-    SUSTAIN_LOOP = 2,
-    PING_PONG_LOOP = 3
+    UNUSED = 2,
+    SUSTAIN_LOOP = 3,
+    PING_PONG_LOOP = 4 // never used
 };
 
 struct Voice {
@@ -232,7 +247,12 @@ struct Voice {
     uint32_t velocity = 0;
     uint32_t channel = 0;
 
-    void start(uint8_t channel, uint8_t note_, uint8_t velocity_,  SampleHeader* s_,  Zone zone_,  ChannelState* ch);
+//    void start(uint8_t channel, uint8_t note_, uint8_t velocity_, Zone zone_,  ChannelState* ch);
+
+void prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan);
+void startNew(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan);
+void startLegato(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan, bool retrig);
+
     void stop();
     void kill();
     void die();

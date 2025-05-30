@@ -28,22 +28,22 @@ public:
         Notch
     };
 
-    struct Coeffs {
+    struct DRAM_ATTR Coeffs {
         float b0, b1, b2, a1, a2;
     };
 
 private:
-    static constexpr float pi = 3.14159265358979323846f;
-    static constexpr size_t FreqSteps = 64;
-    static constexpr size_t QSteps = 16;
-    static constexpr float Fs = (float)SAMPLE_RATE;
-    static constexpr float FreqMin = 20.0f;
-    static constexpr float FreqMax = 20000.0f;
-    static constexpr float QMin = 0.5f;
-    static constexpr float QMax = FILTER_MAX_Q;
-    static constexpr float logFreqMin = 2.9957323f;   // logf(20)
-    static constexpr float logFreqMax = 9.9034876f;   // logf(20000)
-    static constexpr float invLogFreqRange = 1.0f / (logFreqMax - logFreqMin);
+    static constexpr DRAM_ATTR float pi = 3.14159265358979323846f;
+    static constexpr DRAM_ATTR size_t FreqSteps = 64;
+    static constexpr DRAM_ATTR size_t QSteps = 16;
+    static constexpr DRAM_ATTR float Fs = (float)SAMPLE_RATE;
+    static constexpr DRAM_ATTR float FreqMin = 20.0f;
+    static constexpr DRAM_ATTR float FreqMax = 20000.0f;
+    static constexpr DRAM_ATTR float QMin = 0.5f;
+    static constexpr DRAM_ATTR float QMax = FILTER_MAX_Q;
+    static constexpr DRAM_ATTR float logFreqMin = 2.9957323f;   // logf(20)
+    static constexpr DRAM_ATTR float logFreqMax = 9.9034876f;   // logf(20000)
+    static constexpr DRAM_ATTR float invLogFreqRange = 1.0f / (logFreqMax - logFreqMin);
 
     struct CoeffsLUTEntry {
         float b0, b1, b2, a1, a2;
@@ -197,7 +197,7 @@ public:
         w1 = w2 = z1 = z2 = 0.0f;
     }
 
-    inline float __attribute__((always_inline)) process(float in) {
+    inline float __attribute__((always_inline)) IRAM_ATTR process(float in) {
         // Use coeffs from external pointer, no internal copy
         const Coeffs& c = *coeffs;
         float out = fmaf(c.b0, in, fmaf(c.b1, x1, c.b2 * x2)) - fmaf(c.a1, y1, c.a2 * y2);
@@ -207,7 +207,7 @@ public:
         return out;
     }
 
-    inline void __attribute__((always_inline)) processLR(float* inOutL, float* inOutR) {
+    inline void __attribute__((always_inline)) IRAM_ATTR processLR(float* inOutL, float* inOutR) {
         const Coeffs& c = *coeffs;
 
         float outL = fmaf(c.b0, *inOutL, fmaf(c.b1, x1, c.b2 * x2)) - fmaf(c.a1, y1, c.a2 * y2);
@@ -270,14 +270,14 @@ public:
         w1 = w2 = z1 = z2 = 0.0f;
     }
 
-    inline float __attribute__((always_inline)) process(float in) {
+    inline float __attribute__((always_inline)) IRAM_ATTR process(float in) {
         float out = fmaf(coeffs.b0, in, fmaf(coeffs.b1, x1, coeffs.b2 * x2)) - fmaf(coeffs.a1, y1, coeffs.a2 * y2);
         x2 = x1; x1 = in;
         y2 = y1; y1 = out;
         return out;
     }
 
-    inline void __attribute__((always_inline)) processLR(float* inOutL, float* inOutR) {
+    inline void __attribute__((always_inline)) IRAM_ATTR processLR(float* inOutL, float* inOutR) {
         float outL = fmaf(coeffs.b0, *inOutL, fmaf(coeffs.b1, x1, coeffs.b2 * x2)) - fmaf(coeffs.a1, y1, coeffs.a2 * y2);
         x2 = x1; x1 = *inOutL;
         y2 = y1; *inOutL = y1 = outL;

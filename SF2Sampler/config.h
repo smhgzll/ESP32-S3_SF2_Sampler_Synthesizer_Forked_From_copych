@@ -36,7 +36,7 @@
 #define   MIDI_IN_DEV           USE_USB_MIDI_DEVICE     // select the appropriate (one of the above) 
 
 // ===================== SYNTHESIZER ================================================================================
-#define MAX_VOICES 16
+#define MAX_VOICES 20 // for now 20 is max for per-channel filtering + chorus + reverb
 #define MAX_VOICES_PER_NOTE 2
 #define PITCH_BEND_CENTER 0
 

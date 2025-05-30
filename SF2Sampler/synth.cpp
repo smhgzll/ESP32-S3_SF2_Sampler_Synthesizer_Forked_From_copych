@@ -52,13 +52,6 @@
 
 static const char* TAG = "Synth";
 
-float pitchBendRatioFromValue(int bendValue, float semitoneRange) {
-    float norm = (bendValue - PITCH_BEND_CENTER) * DIV_8192; // Normalize to [-1, 1]
-    float semis = norm * semitoneRange;
-    return exp2f(semis * DIV_12);  // 2^(semitones/12)
-}
-
-
 Synth::Synth(SF2Parser& parserRef) : parser(parserRef) {
     // Initialize all 16 MIDI channels with default values
     for (int i = 0; i < 16; ++i) {
@@ -83,27 +76,48 @@ bool Synth::begin() {
 
 
 void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
-    if (ch >= 16 || vel == 0) return;
+    if (vel == 0) {
+        noteOff(ch, note);
+        return;
+    }
 
     ChannelState* chan = &channels[ch];
     auto zones = parser.getZonesForNote(note, vel, chan->getBank(), chan->program);
     if (zones.empty()) return;
 
+    bool isMono   = chan->monoMode != ChannelState::Poly;
+    bool retrig   = chan->monoMode == ChannelState::MonoRetrig;
+    Voice* reuseV = nullptr;
+
+    if (isMono) {
+        // Reuse an existing voice on this channel if present
+        for (Voice& v : voices) {
+            if (v.active && v.channel == ch) {
+                reuseV = &v;
+                break;
+            }
+        }
+    }
+
     for (auto& zone : zones) {
         if (!zone.sample) continue;
 
-        uint32_t exclusiveClass = zone.exclusiveClass;
         float score = vel * DIV_127;
 
-        Voice* v = findWeakestVoiceOnNote(ch, note, score, exclusiveClass);
-        if (!v) v = findWorstVoice();
-
-        if (v) {
-            v->start(ch, note, vel, zone.sample, zone, chan);
+        if (isMono && reuseV) {
+            if (retrig) reuseV->kill(); // kill before retrig
+            if (!reuseV->noteHeld) { 
+                reuseV->kill();
+                reuseV->startNew(ch, note, vel, zone, chan);
+            } else {
+                reuseV->startLegato(ch, note, vel, zone, chan, retrig);
+            }
+        } else {
+            Voice* v = allocateVoice(ch, note, score, zone.exclusiveClass);
+            if (v) v->startNew(ch, note, vel, zone, chan);
         }
     }
 }
-
 
 
 void Synth::noteOff(uint8_t ch, uint8_t note) {
@@ -116,8 +130,14 @@ void Synth::noteOff(uint8_t ch, uint8_t note) {
             }
         }
     }
-}
+} 
 
+Voice*  __attribute__((always_inline))   Synth::allocateVoice(uint8_t ch, uint8_t note, float newScore, uint32_t exclusiveClass){
+	Voice* v = findWeakestVoiceOnNote(ch, note, newScore, exclusiveClass);
+	if (!v) v = findWorstVoice();
+	return v;
+}
+ 
 
 void Synth::pitchBend(uint8_t ch, int value) {
     if (ch >= 16) return;
@@ -136,7 +156,6 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
     if (ch >= 16) return;
 
     auto& state = channels[ch];
-    auto& rpn = rpnState[ch];
     float fval = val * DIV_127;
 
     switch (ctrl) {
@@ -205,8 +224,17 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
             state.filterCutoff = knob_tbl[val] * CH_FILTER_MAX_FREQ + CH_FILTER_MIN_FREQ;
             state.filterCoeffs = BiquadCalc::calcCoeffs(state.filterCutoff, state.filterResonance, BiquadCalc::LowPass);
             break;
-#endif
+#endif        
 
+        case 72: // Release time modifier (64-centered)
+            state.releaseModifier = 2.0f * fval - 1.0f;
+            break;
+        case 73: // Attack time modifier (64-centered)
+            state.attackModifier = 2.0f * fval - 1.0f;
+            break;
+		case 84: // Portamento control
+			state.portaCurrentNote = val;
+            break;
         case 91: // Reverb Send
             state.reverbSend = fval;
             break;
@@ -216,8 +244,26 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
         case 95: // Delay Send
             state.delaySend = fval;
             break;
-        case 101: rpn.msb = val; break; // RPN MSB
-        case 100: rpn.lsb = val; break; // RPN LSB
+		case 99: state.nrpn.msb = val; state.rpn = {0x7F, 0x7F}; break; // NRPN MSB (disable RPN)
+		case 98: state.nrpn.lsb = val; state.rpn = {0x7F, 0x7F}; break; // NRPN LSB
+		case 101: state.rpn.msb = val; state.nrpn = {0x7F, 0x7F}; break; // RPN MSB (disable NRPN)
+		case 100: state.rpn.lsb = val; state.nrpn = {0x7F, 0x7F}; break; // RPN LSB
+
+		case 6: // Data Entry MSB
+			if (state.rpn.msb == 0 && state.rpn.lsb == 0) {
+				state.pitchBendRange = static_cast<float>(val);
+			} else if (state.nrpn.msb == 0x01 && state.nrpn.lsb == 0x10) { // nrpn 0x01 0x10 to switch mono/poly ()
+				switch (val) {
+					case 0: state.monoMode = ChannelState::Poly; break;
+					case 1: state.monoMode = ChannelState::MonoLegato; break;
+					case 2: state.monoMode = ChannelState::MonoRetrig; break;
+				}
+			}
+			break;
+
+		case 38: // Data Entry LSB
+			// Optional: support for LSB pitch bend range or future NRPNs
+			break;
         case 120: // All Sound Off
             soundOff(ch);
             break;
@@ -227,14 +273,15 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
         case 123: // All Notes Off
             allNotesOff(ch);
             break;
-        case 6: // Data Entry MSB
-            if (rpn.msb == 0 && rpn.lsb == 0) { // Pitch Bend Range
-                state.pitchBendRange = static_cast<float>(val); // in semitones
-            }
-            break;
-        case 38: // Data Entry LSB — cents, optional
-            // (can be added if high resolution needed)
-            break;
+		case 126: // Mono Mode On
+			// val > 0 = MonoLegato with val voices, val == 0 = MonoRetrig
+			state.monoMode = (val > 0) ? ChannelState::MonoLegato : ChannelState::MonoRetrig;
+			ESP_LOGI(TAG, "CC126: Channel %u → %s", ch, (val > 0 ? "MonoLegato" : "MonoRetrig"));
+			break;
+		case 127: // Poly Mode On
+			state.monoMode = ChannelState::Poly;
+			ESP_LOGI(TAG, "CC127: Channel %u → Poly", ch);
+			break;
         default:
             break;
     }
@@ -254,7 +301,8 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
         return;
     }
 
-    if ((state.bankMSB == 120 || state.bankMSB == 127) && !parser.hasPreset(bank, program) ) {
+    // drum channels
+    if ((ch == 9 || state.bankMSB == 120 || state.bankMSB == 127) && !parser.hasPreset(bank, program) ) {
         state.setBank(128);
         if (parser.hasPreset(bank, program)) {
             ESP_LOGI(TAG, "Ch%u: Fallback to Program=%u, Bank=%u", ch, program, bank);
@@ -265,6 +313,14 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
             return;
         }
     }
+
+    // drum channels
+    if (ch == 9 && program!=0) {
+        state.setBank(128);
+        state.program = 0;
+        return;
+    }
+
     // Fallback to Bank 0, same program
     ESP_LOGW(TAG, "Ch%u: Program %u not found in Bank %u, falling back to Bank 0", ch, program, bank);
     uint16_t fallbackBank = (bank & 0x7F00);  
@@ -296,17 +352,17 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
 }
 
 
-void Synth::renderLRBlock(float* outL, float* outR) {
-    alignas(16) float dryL[DMA_BUFFER_LEN] = {0};
-    alignas(16) float dryR[DMA_BUFFER_LEN] = {0};
+void   __attribute__((hot,always_inline)) IRAM_ATTR Synth::renderLRBlock(float* outL, float* outR) {
+     float dryL[DMA_BUFFER_LEN] = {0};
+     float dryR[DMA_BUFFER_LEN] = {0};
 #ifdef ENABLE_CHORUS
-    alignas(16) float choL[DMA_BUFFER_LEN] = {0}, choR[DMA_BUFFER_LEN] = {0};
+     float choL[DMA_BUFFER_LEN] = {0}, choR[DMA_BUFFER_LEN] = {0};
 #endif
 #ifdef ENABLE_REVERB
-    alignas(16) float revL[DMA_BUFFER_LEN] = {0}, revR[DMA_BUFFER_LEN] = {0};
+     float revL[DMA_BUFFER_LEN] = {0}, revR[DMA_BUFFER_LEN] = {0};
 #endif
 #ifdef ENABLE_DELAY
-    alignas(16) float delL[DMA_BUFFER_LEN] = {0}, delR[DMA_BUFFER_LEN] = {0};
+     float delL[DMA_BUFFER_LEN] = {0}, delR[DMA_BUFFER_LEN] = {0};
 #endif
 
 #ifdef ENABLE_CH_FILTER
@@ -444,8 +500,7 @@ Voice* Synth::findWeakestVoiceOnNote(uint8_t ch, uint8_t note, float newScore, u
         Voice& v = voices[i];
         if (v.active && v.channel == ch) { 
             if (v.exclusiveClass > 0 && v.exclusiveClass == exclusiveClass) {
-                v.die();
-                ESP_LOGI(TAG, "Killing voice %d", v.id);
+                v.die(); // Kill voices of the same class
             }
             if (v.note == note) {
                 count++;
@@ -560,10 +615,27 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
         ESP_LOGI(TAG, "Received GM System On SysEx");
         return true;
     }
+	
+	// XG System On (F0 43 1x 4C 00 00 7E 00 F7)
+    if (len == 9 &&
+        data[0] == 0xF0 &&
+        data[1] == 0x43 &&
+        // data[2] == 0x10 && 	// is device ID, ignored
+        data[3] == 0x4C &&
+        data[4] == 0x00 &&
+        data[5] == 0x00 &&
+        data[6] == 0x7E &&
+        data[7] == 0x00 &&
+        data[8] == 0xF7) {
+
+        GMReset(); // we actually fully reset the synth
+        ESP_LOGI(TAG, "Received XG System On SysEx");
+        return true;
+    }
     if (len==9 && 
         data[0] == 0xF0 && 
         data[1] == 0x43 && 
-        data[2] == 0x10 &&
+        // data[2] == 0x10 &&
         data[3] == 0x4C && 
         data[4] == 0x08 && 
         data[5] == 0x00 &&
@@ -580,9 +652,29 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
                 channels[part].setBank(128);
                 ESP_LOGI(TAG, "Set MIDI channel %d to Drum Kit", part);
             }
+			return true;
         }
     }
+	
+	// XG Mono/Poly Mode per-part
+    if (len == 9 &&
+        data[0] == 0xF0 &&
+        data[1] == 0x43 &&
+        data[3] == 0x4C &&
+        data[4] == 0x08 &&
+        // data[5] = part number
+        data[6] == 0x05 &&
+        // data[7] = mode: 00 = Mono, 01 = Poly
+        data[8] == 0xF7) {
 
+        uint8_t part = data[5]; // 0–15 for parts 1–16
+        if (part < 16) {
+            bool mono = (data[7] == 0x00);
+            channels[part].monoMode = mono ? ChannelState::MonoLegato : ChannelState::Poly;
+            ESP_LOGI(TAG, "Received XG Mono/Poly SysEx: Part %u → %s", part + 1, mono ? "Mono" : "Poly");
+            return true;
+        }
+    }
     return false;
 }
 
@@ -645,6 +737,7 @@ bool Synth::loadSf2File(const char* filename) {
 
     reset();      // Stop voices and reset channels
     GMReset();    // Apply GM defaults
+   // parser.dumpPresetStructure();
     return true;
 }
 

@@ -95,7 +95,7 @@ public:
         mode = m;
     }
 
-    inline void ProcessBlock(float* buffer_l, float* buffer_r) {
+    inline void  __attribute__((hot,always_inline)) IRAM_ATTR ProcessBlock(float* buffer_l, float* buffer_r) {
         for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
             uint32_t outIndex = (delayIn + MAX_DELAY - delayLen) % MAX_DELAY;
 
