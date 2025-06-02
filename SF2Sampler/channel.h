@@ -50,8 +50,8 @@ struct DRAM_ATTR ChannelState {
     float chorusSend = 0.0f;    // CC#93, 0.0–1.0
     float delaySend = 0.0f;     // CC#95, 0.0-1.0
 
-    float attackModifier  = 0.0f;	//CC#73	-1.0 .. 1.0
-    float releaseModifier = 0.0f;	//CC#72 -1.0 .. 1.0
+    float attackModifier  = 1.0f;	//CC#73	1.0 .. 4.8
+    float releaseModifier = 1.0f;	//CC#72 1.0 .. 4.8
 
     // Pitch bend
     float pitchBend = 0.0f;     // -1.0 to +1.0 (centered)
@@ -190,6 +190,8 @@ struct DRAM_ATTR ChannelState {
         sustainPedal = false; // CC#64
         portaTime = 0.2f;      // CC#5
         portamento = false;    // CC#65
+        attackModifier = 1.0f;  // CC#73
+        releaseModifier = 1.0f; // CC#72
         monoMode = Poly;
         clearNoteStack() ;
 #if defined(ENABLE_CH_FILTER) || defined(ENABLE_CH_FILTER_M)

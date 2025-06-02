@@ -137,6 +137,7 @@ struct DRAM_ATTR Voice {
 
     void updateScore();
     void updatePortamento();
+    void updatePitchOnly(uint8_t newNote, ChannelState* chan);
 
     inline void  __attribute__((always_inline)) updatePan() {
         float pZone = zone.pan;

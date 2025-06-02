@@ -56,6 +56,7 @@ public:
     bool loadNextSf2();
     void scanSf2Files();
     void renderLRBlock(float*, float*);
+    void setChannelMode(uint8_t ch, ChannelState::MonoMode mode);
     
 private:
     

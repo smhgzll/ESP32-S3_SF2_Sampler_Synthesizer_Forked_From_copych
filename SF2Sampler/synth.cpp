@@ -81,70 +81,98 @@ void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     }
 
     ChannelState* chan = &channels[ch];
+    bool isMono = chan->monoMode != ChannelState::Poly;
+    bool retrig = chan->monoMode != ChannelState::MonoLegato;
+
     auto zones = parser.getZonesForNote(note, vel, chan->getBank(), chan->program);
     if (zones.empty()) return;
 
-    bool isMono = chan->monoMode != ChannelState::Poly;
-    bool retrig = chan->monoMode == ChannelState::MonoRetrig;
-
     chan->pushNote(note);
-    Voice* reuseV = nullptr;
 
     if (isMono) {
-        // reuse existing voice for mono
-        for (Voice& v : voices) {
-            if (v.active && v.channel == ch) {
-                reuseV = &v;
-                break;
+        if (retrig) {
+            // Kill all existing voices on this channel
+            for (auto& v : voices)
+                if (v.active && v.channel == ch)
+                    v.die();
+
+            // Start new voices for all zones
+            for (auto& zone : zones) {
+                if (!zone.sample) continue;
+                float score = vel * DIV_127;
+                Voice* v = allocateVoice(ch, note, score, zone.exclusiveClass);
+                if (v) v->startNew(ch, note, vel, zone, chan);
+            }
+        } else {
+            // Legato: update pitch of ALL existing voices, or start new if none
+            bool reused = false;
+            for (Voice& v : voices) {
+                if (  v.active && v.channel == ch) {
+                    if (!v.noteHeld) {
+                        v.die();
+                    } else {
+                        v.updatePitchOnly(note, chan);
+                        reused = true;
+                    }
+                }
+            }
+            if (!reused) {
+                // First note: start new voices
+                for (auto& zone : zones) {
+                    if (!zone.sample) continue;
+                    float score = vel * DIV_127;
+                    Voice* v = allocateVoice(ch, note, score, zone.exclusiveClass);
+                    if (v) v->startNew(ch, note, vel, zone, chan);
+                }
             }
         }
-    }
-
-    for (auto& zone : zones) {
-        if (!zone.sample) continue;
-
-        float score = vel * DIV_127;
-
-        if (isMono && reuseV) {
-            if (retrig) reuseV->kill();
-            reuseV->startLegato(ch, note, vel, zone, chan, retrig);
-        } else {
+    } else {
+        // Polyphonic: start new voices normally
+        for (auto& zone : zones) {
+            if (!zone.sample) continue;
+            float score = vel * DIV_127;
             Voice* v = allocateVoice(ch, note, score, zone.exclusiveClass);
             if (v) v->startNew(ch, note, vel, zone, chan);
         }
     }
-
     chan->portaCurrentNote = note;
 }
 
 void Synth::noteOff(uint8_t ch, uint8_t note) {
     if (ch >= 16) return;
-    ChannelState* chan = &channels[ch];
-    chan->removeNote(note);
 
+    ChannelState* chan = &channels[ch];
     bool isMono = chan->monoMode != ChannelState::Poly;
+    bool isRetrig = chan->monoMode == ChannelState::MonoRetrig;
+
+    chan->removeNote(note);
     uint8_t nextNote = chan->topNote();
 
     for (Voice& v : voices) {
         if (!v.active || v.channel != ch) continue;
 
         if (isMono) {
-            // Mono: kill or retrig on stack transition
             if (!chan->hasNotes()) {
+                // No more held notes → kill all
                 v.noteHeld = false;
                 v.stop();
-            } else if (v.note != nextNote) {
-                // retrig if different note
-                auto zones = parser.getZonesForNote(nextNote, 100, chan->getBank(), chan->program); // default velocity
-                if (!zones.empty()) {
-                    v.startLegato(ch, nextNote, 100, zones.front(), chan, false);
-                    chan->portaCurrentNote = nextNote;
+            } else if (isRetrig) {
+                if (v.note == note) {
+                    v.noteHeld = false;
+                    v.die();
+                }
+            } else {
+                // MonoLegato: switch pitch of ALL voices to next note
+                if (v.note != nextNote) {
+                    v.updatePitchOnly(nextNote, chan);
                 }
             }
-        } else if (v.note == note) {
-            // Poly
-            v.noteHeld = false;
-            v.stop();
+        } else {
+            // Poly mode
+            if (v.note == note) {
+                v.noteHeld = false;
+                v.stop();
+            }
         }
     }
 }
@@ -244,10 +272,10 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
 #endif        
 
         case 72: // Release time modifier (64-centered)
-            state.releaseModifier = 2.0f * fval - 1.0f;
+            state.releaseModifier = knob_tbl[val] * 4.8072f; // 1.0 at val=64
             break;
         case 73: // Attack time modifier (64-centered)
-            state.attackModifier = 2.0f * fval - 1.0f;
+            state.attackModifier = knob_tbl[val] * 4.8072f; // 1.0 at val=64
             break;
 		case 84: // Portamento control
 			state.portaCurrentNote = val;
@@ -271,9 +299,10 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
 				state.pitchBendRange = static_cast<float>(val);
 			} else if (state.nrpn.msb == 0x01 && state.nrpn.lsb == 0x10) { // nrpn 0x01 0x10 to switch mono/poly ()
 				switch (val) {
-					case 0: state.monoMode = ChannelState::Poly; break;
-					case 1: state.monoMode = ChannelState::MonoLegato; break;
-					case 2: state.monoMode = ChannelState::MonoRetrig; break;
+					case 0: setChannelMode(ch, ChannelState::MonoLegato); break;
+					case 1: setChannelMode(ch, ChannelState::MonoRetrig); break;
+                    default:
+					case 2: setChannelMode(ch, ChannelState::Poly);
 				}
 			}
 			break;
@@ -292,14 +321,12 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
             break;
 		case 126: // Mono Mode On
 			// val > 0 = MonoLegato with val voices, val == 0 = MonoRetrig
-			state.monoMode = (val > 0) ? ChannelState::MonoLegato : ChannelState::MonoRetrig;
-            state.clearNoteStack() ;
-			ESP_LOGI(TAG, "CC126: Channel %u → %s", ch, (val > 0 ? "MonoLegato" : "MonoRetrig"));
+            setChannelMode(ch, (val > 0) ? ChannelState::MonoLegato : ChannelState::MonoRetrig);
+			ESP_LOGI(TAG, "CC126: Channel %u → %s", ch+1, (val > 0 ? "MonoLegato" : "MonoRetrig"));
 			break;
 		case 127: // Poly Mode On
-			state.monoMode = ChannelState::Poly;
-            state.clearNoteStack() ;
-			ESP_LOGI(TAG, "CC127: Channel %u → Poly", ch);
+            setChannelMode(ch, ChannelState::Poly);
+			ESP_LOGI(TAG, "CC127: Channel %u → Poly", ch+1);
 			break;
         default:
             break;
@@ -324,7 +351,7 @@ void Synth::applyBankProgram(uint8_t ch) {
     if (parser.hasPreset(bank, program)) {
         state.program = program;
         state.setBank(bank);
-        ESP_LOGI(TAG, "Ch%u: Program=%u, Bank=%u (%s)", ch, program, bank, state.isDrum ? "Drum" : "Melodic");
+        ESP_LOGI(TAG, "Ch%u: Program=%u, Bank=%u (%s)", ch+1, program, bank, state.isDrum ? "Drum" : "Melodic");
         return;
     }
 
@@ -332,7 +359,7 @@ void Synth::applyBankProgram(uint8_t ch) {
     if (!state.isDrum && parser.hasPreset(0, program)) {
         state.program = program;
         state.setBank(0);
-        ESP_LOGW(TAG, "Ch%u: Bank %u not found, fallback to Bank 0 (Program=%u)", ch, bank, program);
+        ESP_LOGW(TAG, "Ch%u: Bank %u not found, fallback to Bank 0 (Program=%u)", ch+1, bank, program);
         return;
     }
 
@@ -341,9 +368,9 @@ void Synth::applyBankProgram(uint8_t ch) {
     if (parser.hasPreset(fallbackBank, 0)) {
         state.program = 0;
         state.setBank(fallbackBank);
-        ESP_LOGW(TAG, "Ch%u: Fallback to Program=0, Bank=%u (%s)", ch, fallbackBank, state.isDrum ? "Drum" : "Melodic");
+        ESP_LOGW(TAG, "Ch%u: Fallback to Program=0, Bank=%u (%s)", ch+1, fallbackBank, state.isDrum ? "Drum" : "Melodic");
     } else {
-        ESP_LOGE(TAG, "Ch%u: No valid preset for Program=%u in any known bank", ch, program);
+        ESP_LOGE(TAG, "Ch%u: No valid preset for Program=%u in any known bank", ch+1, program);
     }
 }
 
@@ -661,11 +688,11 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
             if (mode == 0) {
                 state.wantBankMSB = 0;
                 state.wantBankLSB = 0;
-                ESP_LOGI(TAG, "XG: Ch%u set to General MIDI (Bank 0)", part);
+                ESP_LOGI(TAG, "XG: Ch%u set to General MIDI (Bank 0)", part+1);
             } else {
                 state.wantBankMSB = 1;  // Bank 128
                 state.wantBankLSB = 0;
-                ESP_LOGI(TAG, "XG: Ch%u set to Drum Kit (Bank 128)", part);
+                ESP_LOGI(TAG, "XG: Ch%u set to Drum Kit (Bank 128)", part+1);
             }
 
             applyBankProgram(part);
@@ -687,8 +714,7 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
         uint8_t part = data[5]; // 0–15 for parts 1–16
         if (part < 16) {
             bool mono = (data[7] == 0x00);
-            channels[part].monoMode = mono ? ChannelState::MonoRetrig : ChannelState::Poly;
-            channels[part].clearNoteStack() ;
+            setChannelMode(part, mono ? ChannelState::MonoRetrig : ChannelState::Poly );
             ESP_LOGI(TAG, "Received XG Mono/Poly SysEx: Part %u → %s", part + 1, mono ? "Mono" : "Poly");
             return true;
         }
@@ -760,6 +786,7 @@ bool Synth::loadSf2File(const char* filename) {
 }
 
 bool Synth::loadNextSf2() {
+    parser.clear();
     if (sf2Files.empty()) {
         scanSf2Files();
         if (sf2Files.empty()) {
@@ -770,6 +797,11 @@ bool Synth::loadNextSf2() {
 
     currentFileIndex = (currentFileIndex + 1) % sf2Files.size();
     return loadSf2File(sf2Files[currentFileIndex].c_str());
+}
+
+void Synth::setChannelMode(uint8_t ch, ChannelState::MonoMode mode) {
+    channels[ch].monoMode = mode;
+    channels[ch].clearNoteStack();
 }
 
 

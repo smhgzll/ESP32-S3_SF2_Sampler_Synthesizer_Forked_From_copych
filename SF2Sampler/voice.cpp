@@ -31,8 +31,7 @@
 static const char* TAG = "Voice";
 
 inline float velocityToGain(uint32_t velocity) {
-    //    return velocity * velocity * DIV_127 * DIV_127; // square velocity
-    // return velocity * DIV_127; // linear velocity
+    //    return velocity * velocity * DIV_127 * DIV_127; // square velocity 
     return velocity * DIV_127; // linear velocity
     //return powf(velocity, 0.6f); // 0.6 = 60% powerlaw, approximating sqrt()
 }
@@ -106,11 +105,11 @@ void Voice::prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, 
     reverbAmount = zone.reverbSend * chan->reverbSend;
     chorusAmount = zone.chorusSend * chan->chorusSend;
 
-    ampEnv.setAttackTime(zone.attackTime);
+    ampEnv.setAttackTime(zone.attackTime * chan->attackModifier);
     ampEnv.setDecayTime(zone.decayTime);
     ampEnv.setHoldTime(zone.holdTime);
     ampEnv.setSustainLevel(zone.sustainLevel);
-    ampEnv.setReleaseTime(zone.releaseTime);
+    ampEnv.setReleaseTime(zone.releaseTime * chan->releaseModifier);
 
     int32_t loopStartOffset = zone.loopStartOffset + (zone.loopStartCoarseOffset << 15);
     int32_t loopEndOffset = zone.loopEndOffset + (zone.loopEndCoarseOffset << 15);
@@ -142,17 +141,39 @@ void Voice::prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, 
 
 void Voice::startNew(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan) {
     prepareStart(ch, note_, vel, z, chan);
-
     ampEnv.retrigger(Adsr::END_NOW);
     active = true;
 }
 
-void Voice::startLegato(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan, bool retrig) {
-    prepareStart(ch, note_, vel, z, chan);
 
-    if (retrig) ampEnv.retrigger(Adsr::END_FAST);
-    active = true;
+void Voice::updatePitchOnly(uint8_t newNote, ChannelState* chan) {
+
+    int rootKey = (zone.rootKey >= 0) ? zone.rootKey : sample->originalPitch;
+    float semi = float(newNote - rootKey) + (sample->pitchCorrection * 0.01f) + zone.coarseTune + zone.fineTune;
+    float noteRatio = exp2f(semi * DIV_12);
+    basePhaseIncrement = float(sample->sampleRate) * DIV_SAMPLE_RATE * noteRatio;
+
+    portamentoActive = modPortamento && *modPortamento; 
+    if (portamentoActive) {
+        float noteDiff = float(newNote - chan->portaCurrentNote);
+        float freqRatio = exp2f(noteDiff * DIV_12);
+        float timeSec = 0.01f + (*modPortaTime) * 0.5f;
+        float totalSamples = timeSec * SAMPLE_RATE;
+       // currentPhaseIncrement = basePhaseIncrement / freqRatio;
+        portamentoFactor = 1.0f / freqRatio;
+        portamentoLogDelta = exp2f(log2f(freqRatio) / totalSamples);
+    } else {
+        currentPhaseIncrement = basePhaseIncrement;
+        portamentoFactor = 1.0f;
+        portamentoLogDelta = 1.0f;
+    }
+
+    note = newNote;
+    
+    updatePitch();
+    ESP_LOGI(TAG, "Pitch recalc v_id %d portaFactor %.5f", id, portamentoFactor);
 }
+
 
 
 void Voice::stop() {
