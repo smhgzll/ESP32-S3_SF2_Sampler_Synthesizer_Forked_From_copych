@@ -30,11 +30,11 @@ static const char* TAG = "Main";
 #define FORMAT_LITTLEFS_IF_FAILED
 
 #include <Arduino.h>
+#include "esp_task_wdt.h"
 #include <float.h>
 #include "config.h"
- 
+#include "misc.h" 
 #include "esp_log.h"
-
 #include <FS.h>
 #include "SD_MMC.h"
 #include <LittleFS.h>
@@ -43,7 +43,6 @@ static const char* TAG = "Main";
 #include "SF2Parser.h"
 #include "adsr.h"
 #include "voice.h"
-#include "button.h"
 
 #ifdef ENABLE_RGB_LED
     #include "rgb_led.h"
@@ -58,6 +57,7 @@ static const char* TAG = "Main";
 // tasks for Core0 and Core1
 TaskHandle_t Task1;
 TaskHandle_t Task2;
+TaskHandle_t Task3;
 
 int Voice::usage; // counts voices internally
 
@@ -87,35 +87,18 @@ int Voice::usage; // counts voices internally
     FxDelay     DRAM_ATTR   delayfx;
 #endif
 
+
+
 I2S_Audio   AudioPort(I2S_Audio::MODE_OUT);
 SF2Parser   parser(SF2_PATH);
 Synth       synth(parser);
 
-// ========================== Button ===============================================================================================
-MuxButton myButton;
-uint8_t SW; // a variable that will receive a reading result for latter processing
-void myBtnHandler(int id, MuxButton::btnEvents evt) { // a function that will receive an ID of a fired button, and the event
-  static bool sysSD = true;
-  switch (evt){
-    case MuxButton::EVENT_CLICK:
-        ESP_LOGI("button", "CLICK");
-        synth.loadNextSf2();
-        break;
-    case MuxButton::EVENT_LONGPRESS: 
-        ESP_LOGI("button", "LONG PRESS");
-        if (sysSD) { 
-            synth.setFileSystem(FileSystemType::SD);       // Use SD card
-            ESP_LOGI(TAG, "\nUse SD card");
-        } else {
-            synth.setFileSystem(FileSystemType::LITTLEFS); // Use internal flash
-            ESP_LOGI(TAG, "\nUse LITTLEFS");
-        }
-        synth.scanSf2Files();
-        sysSD = !sysSD;
-        break;
-  }
-}
 
+// ========================== GUI ==============================================================================================
+#ifdef ENABLE_GUI
+    #include "TextGui.h"
+    TextGUI gui(synth);
+#endif
 
 // ========================== MIDI handlers ===============================================================================================
 void handleNoteOn(byte ch, byte note, byte vel) {
@@ -153,15 +136,16 @@ void handleSystemExclusive( uint8_t* data, size_t len) {
     uint32_t DRAM_ATTR dt1,dt2,dt3,dt4,dt5,dt6;
     uint32_t DRAM_ATTR total_render = 0;
     uint32_t DRAM_ATTR total_write  = 0;
-    uint32_t DRAM_ATTR frame_count  = 0;
 #endif
 
+    volatile uint32_t DRAM_ATTR frame_count  = 0;
     float DRAM_ATTR blockL[DMA_BUFFER_LEN];
     float DRAM_ATTR blockR[DMA_BUFFER_LEN];
 
-// ========================== Core 0 Task ===============================================================================================
+
+// ========================== Core 0 Task 1 ===============================================================================================
 // Core0 task -- AUDIO
-static void IRAM_ATTR audio_task1(void *userData) {
+static void IRAM_ATTR audio_task(void *userData) {
     vTaskDelay(20); 
     ESP_LOGI(TAG, "Starting Task1");
 
@@ -190,15 +174,15 @@ static void IRAM_ATTR audio_task1(void *userData) {
 
         total_render += (t1 - t0);
         total_write  += (t2 - t1);
-        frame_count++;
 #endif
 
+        frame_count++;
     }
 }
 
 
-// ========================== Core 1 Task ===============================================================================================
-static void IRAM_ATTR audio_task2(void *userData) { 
+// ========================== Core 1 Task 2 ===============================================================================================
+static void IRAM_ATTR control_task(void *userData) { 
     vTaskDelay(50);
     ESP_LOGI(TAG, "Starting Task2");
     
@@ -210,12 +194,24 @@ static void IRAM_ATTR audio_task2(void *userData) {
 #endif
         vTaskDelay(1);
         taskYIELD();
+
+#ifdef ENABLE_GUI
+        if (__builtin_expect((gui_blocker == 0), 1)) {
+            // Read GUI input
+            gui.encA = digitalRead(ENC0_A_PIN);
+            gui.encB = digitalRead(ENC0_B_PIN);
+            gui.btnState = digitalRead(BTN0_PIN);
+            
+            gui.process();
+        } else {
+            gui_blocker--;
+            if (gui_blocker < 0) { gui_blocker = 0; }
+        }
+#endif
         
-        SW = digitalRead(0); // read GPIO0
-        myButton.process();
-        
+        if (frame_count >= 64) {
+
 #ifdef TASK_BENCHMARKING
-        if (frame_count >= 1024) {
             uint32_t avg_render = total_render / frame_count;
             uint32_t avg_write  = total_write  / frame_count;
 
@@ -224,13 +220,29 @@ static void IRAM_ATTR audio_task2(void *userData) {
 
             total_render = 0;
             total_write  = 0;
+#endif
+            synth.updateActivity();
             frame_count  = 0;
         }
-#endif
-
 
     }
 }
+
+#ifdef ENABLE_GUI
+// ========================== Core 1 Task 3 ===============================================================================================
+static void IRAM_ATTR gui_task(void *userData) { 
+    vTaskDelay(50);
+    ESP_LOGI(TAG, "Starting Task3");
+    
+    while (true) {
+        if (gui_blocker == 0) {
+            gui.draw();
+        }
+        taskYIELD();
+    }
+
+}
+#endif
 
 // ========================== SETUP ===============================================================================================
 void setup() {
@@ -281,15 +293,27 @@ void setup() {
 
 #ifdef ENABLE_REVERB
     reverb.init();
+    ESP_LOGI(TAG, "Reverb FX started");
 #endif
 
 #ifdef ENABLE_DELAY
     delayfx.Init();
+    ESP_LOGI(TAG, "Delay FX started");
 #endif
  
     synth.begin();
+    ESP_LOGI(TAG, "Synth is starting");
 
-
+#ifdef ENABLE_GUI
+    pinMode(ENC0_A_PIN, SIG_INPUT_MODE);
+    pinMode(ENC0_B_PIN, SIG_INPUT_MODE);
+    pinMode(BTN0_PIN, SIG_INPUT_MODE);
+    pinMode(DISPLAY_SDA, INPUT);
+    pinMode(DISPLAY_SCL, INPUT);
+    delay(100);
+    gui.begin();
+    ESP_LOGI(TAG, "GUI started");
+#endif
 
 #ifdef ENABLE_RGB_LED
     setupLed();
@@ -299,27 +323,20 @@ void setup() {
     AudioPort.init(I2S_Audio::MODE_OUT);
     ESP_LOGI(TAG, "I2S Audio port started");
 
-    ESP_LOGI(TAG, "Reverb started");
+    xTaskCreatePinnedToCore( audio_task, "SynthTask", 5000, NULL, 8, &Task1, 0 );
+    xTaskCreatePinnedToCore( control_task, "ControlTask", 5000, NULL, 8, &Task2, 1 );
 
-    pinMode(0, SIG_INPUT_MODE);
-    myButton.bind(0, &SW, myBtnHandler);
+#ifdef ENABLE_GUI
+    xTaskCreatePinnedToCore( gui_task, "GUITask", 5000, NULL, 5, &Task3, 1 );
+#endif
 
-    xTaskCreatePinnedToCore( audio_task1, "SynthTask1", 5000, NULL, 5, &Task1, 0 );
-    xTaskCreatePinnedToCore( audio_task2, "SynthTask2", 5000, NULL, 5, &Task2, 1 );
     vTaskDelay(30);
+
     ESP_LOGI(TAG, "SF2 Synth ready");
 }
 
 
 // ====================== LOOP ================= KILL IT OR NOT =========================================================
 void loop() {
-    /*
-    for (int i = 0; i < MAX_VOICES; i++) {
-        handleNoteOn(0, 32 + i * 2, 90);
-        delay(500);        
-    }
-    delay(10000);
-        synth.printState();
-    */
-     vTaskDelete(NULL);
+    vTaskDelete(NULL);
 }

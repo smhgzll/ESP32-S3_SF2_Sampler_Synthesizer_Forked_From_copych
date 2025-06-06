@@ -309,3 +309,6 @@ inline float fastExp2(float x) {
     return ldexpf(p, i);
 }
 
+
+static volatile uint32_t DRAM_ATTR gui_blocker = 0;   
+inline void block_gui() {  gui_blocker = 100; /* this many audio buffers would run before gui starts again */ }

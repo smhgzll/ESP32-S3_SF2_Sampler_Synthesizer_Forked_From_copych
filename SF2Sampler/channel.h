@@ -30,6 +30,7 @@
 #include "adsr.h"
 #include "biquad2.h"
 
+float const activitySmoothingFactor = 0.9f;
 
 struct DRAM_ATTR ChannelState {
     bool isDrum;
@@ -45,6 +46,8 @@ struct DRAM_ATTR ChannelState {
     
     int portaCurrentNote = 60;
     
+    float activity = 0.0f;
+
     // Effects
     float reverbSend = 0.0f;    // CC#91, 0.0–1.0
     float chorusSend = 0.0f;    // CC#93, 0.0–1.0
@@ -57,7 +60,10 @@ struct DRAM_ATTR ChannelState {
     float pitchBend = 0.0f;     // -1.0 to +1.0 (centered)
     float pitchBendRange = 2.0f; // default ±2 semitones
     float pitchBendFactor = 1.0f;  // derived from pitchBend and pitchBendRange
-
+    
+    // Tuning
+    float tuningSemitones = 0.0f;
+    
     // Pedals
     uint32_t sustainPedal = false;  // CC#64
     uint32_t portamento = false ; // CC#65
@@ -173,7 +179,14 @@ struct DRAM_ATTR ChannelState {
     }
 #endif
 
+    inline void activityIncrease(uint8_t velo) {
+        activity += (float)velo * DIV_127 * volume * expression;
+        if (activity > 1.0f) { activity = 1.0f; }
+    }
 
+    inline void activityUpdate() {
+        activity *= activitySmoothingFactor;
+    }
 
     inline void reset() {
         isDrum = false;
@@ -192,6 +205,7 @@ struct DRAM_ATTR ChannelState {
         portamento = false;    // CC#65
         attackModifier = 1.0f;  // CC#73
         releaseModifier = 1.0f; // CC#72
+        tuningSemitones = 0.0f; //
         monoMode = Poly;
         clearNoteStack() ;
 #if defined(ENABLE_CH_FILTER) || defined(ENABLE_CH_FILTER_M)

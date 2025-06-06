@@ -276,7 +276,7 @@ bool SF2Parser::parsePDTA() {
             file.seek(1, SeekCur);
         }
 
-        ESP_LOGI(TAG, "Chunk %.4s processed. Current pos: %u", id, file.position());
+        ESP_LOGD(TAG, "Chunk %.4s processed. Current pos: %u", id, file.position());
 
         if (file.position() > pdtaEnd) {
             ESP_LOGW(TAG, "Stopped: reached end of PDTA section.");

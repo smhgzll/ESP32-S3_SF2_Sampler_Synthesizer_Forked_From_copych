@@ -34,6 +34,7 @@ enum class FileSystemType {
 
 class DRAM_ATTR Synth {
 public:
+
     Synth(SF2Parser& parserRef);
     bool begin();
     void noteOn(uint8_t ch, uint8_t note, uint8_t vel);
@@ -57,7 +58,10 @@ public:
     void scanSf2Files();
     void renderLRBlock(float*, float*);
     void setChannelMode(uint8_t ch, ChannelState::MonoMode mode);
+    void getActivityString(char str[49]);
+    void updateActivity();
     
+    ChannelState channels[16];
 private:
     
     float volume_scaler = 0.5f ;
@@ -71,7 +75,6 @@ private:
 
     SF2Parser& parser;
     
-    ChannelState channels[16];
 
     fs::FS* getFileSystem() ;
 

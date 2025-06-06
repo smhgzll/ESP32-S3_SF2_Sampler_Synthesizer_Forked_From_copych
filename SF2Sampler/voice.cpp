@@ -72,7 +72,7 @@ void Voice::prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, 
         (1.0f - zone.modSustainLevel) * zone.modEnvToPitch * 0.01f : 0.0f;
 
     int rootKey = (zone.rootKey >= 0) ? zone.rootKey : sample->originalPitch;
-    float semi = float(note_ - rootKey) + (sample->pitchCorrection * 0.01f) + zone.coarseTune + zone.fineTune;
+    float semi = float(note_ - rootKey) + (sample->pitchCorrection * 0.01f) + zone.coarseTune + zone.fineTune + chan->tuningSemitones;
     float noteRatio = exp2f((modEnvStaticTune + semi) * DIV_12);
     float baseStep = float(sample->sampleRate) * DIV_SAMPLE_RATE;
     basePhaseIncrement = baseStep * noteRatio;
@@ -146,8 +146,7 @@ void Voice::startNew(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, Chan
 }
 
 
-void Voice::updatePitchOnly(uint8_t newNote, ChannelState* chan) {
-
+void Voice::updatePitchOnly(uint8_t newNote, ChannelState* chan) {    
     int rootKey = (zone.rootKey >= 0) ? zone.rootKey : sample->originalPitch;
     float semi = float(newNote - rootKey) + (sample->pitchCorrection * 0.01f) + zone.coarseTune + zone.fineTune;
     float noteRatio = exp2f(semi * DIV_12);

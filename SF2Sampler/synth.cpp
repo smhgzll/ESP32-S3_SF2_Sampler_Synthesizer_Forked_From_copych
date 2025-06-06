@@ -80,7 +80,14 @@ void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
         return;
     }
 
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
+
     ChannelState* chan = &channels[ch];
+
+    chan->activityIncrease(vel);
+
     bool isMono = chan->monoMode != ChannelState::Poly;
     bool retrig = chan->monoMode != ChannelState::MonoLegato;
 
@@ -140,6 +147,10 @@ void Synth::noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
 
 void Synth::noteOff(uint8_t ch, uint8_t note) {
     if (ch >= 16) return;
+    
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
 
     ChannelState* chan = &channels[ch];
     bool isMono = chan->monoMode != ChannelState::Poly;
@@ -188,6 +199,10 @@ Voice*  __attribute__((always_inline))   Synth::allocateVoice(uint8_t ch, uint8_
 void Synth::pitchBend(uint8_t ch, int value) {
     if (ch >= 16) return;
 
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
+
     float norm = (value - PITCH_BEND_CENTER) * DIV_8192;
     float semis = norm * channels[ch].pitchBendRange;
 
@@ -200,6 +215,10 @@ void Synth::pitchBend(uint8_t ch, int value) {
 void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
 
     if (ch >= 16) return;
+
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
 
     auto& state = channels[ch];
     float fval = val * DIV_127;
@@ -351,7 +370,7 @@ void Synth::applyBankProgram(uint8_t ch) {
     if (parser.hasPreset(bank, program)) {
         state.program = program;
         state.setBank(bank);
-        ESP_LOGI(TAG, "Ch%u: Program=%u, Bank=%u (%s)", ch+1, program, bank, state.isDrum ? "Drum" : "Melodic");
+        ESP_LOGD(TAG, "Ch%u: Program=%u, Bank=%u (%s)", ch+1, program, bank, state.isDrum ? "Drum" : "Melodic");
         return;
     }
 
@@ -378,6 +397,10 @@ void Synth::applyBankProgram(uint8_t ch) {
 
 void Synth::programChange(uint8_t ch, uint8_t program) {
     if (ch >= 16) return;
+    
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
 
     auto& state = channels[ch];
     state.wantProgram = program & 0x7F;
@@ -586,7 +609,6 @@ void Synth::updateScores() {
         v.updatePitchFactors();
     }
 }
- 
 
 void Synth::reset() {
     for (int ch = 0; ch < 16; ++ch) {
@@ -670,56 +692,47 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
         return true;
     }
     
+
     if (len == 9 &&
-        data[0] == 0xF0 &&
-        data[1] == 0x43 &&
-        // data[2] == 0x10 (device ID)
-        data[3] == 0x4C &&
-        data[4] == 0x08 &&
-        data[5] == 0x00 &&
-        data[8] == 0xF7) {
-
-        uint8_t part = data[6];     // MIDI channel 0–15
-        uint8_t mode = data[7];     // 0 = GM, 1 = Drum
-
+    data[0] == 0xF0 &&
+    data[1] == 0x43 &&
+    // data[2] == 0x10 //(device ID)
+    data[3] == 0x4C &&
+    data[4] == 0x08 &&
+    data[8] == 0xF7) {
+        uint8_t part = data[5]; // MIDI channel 0–15
+        uint8_t param = data[6]; 
+        uint8_t val = data[7]; // 0 = GM, 1 = Drum
         if (part < 16) {
             auto& state = channels[part];
+            if (param == 0x05) {
+                bool mono = (val == 0x00);
+                setChannelMode(part, mono ? ChannelState::MonoLegato : ChannelState::Poly );
+                ESP_LOGI(TAG, "Received XG Mono/Poly SysEx: Part %u → %s", part + 1, mono ? "Mono" : "Poly");
+                return true;
+            } else if (param == 0x08) {
+                state.tuningSemitones = val - 64.0f;
+                ESP_LOGI(TAG, "Received XG part note shift SysEx: Part %u → %d", part + 1, (int)(val-64.0f));
+                return true;
+            } else if (param == 0x07) {
+                if (val == 0) {
+                    state.wantBankMSB = 0;
+                    state.wantBankLSB = 0;
+                    ESP_LOGI(TAG, "XG: Ch%u set to General MIDI (Bank 0)", part+1);
+                } else {
+                    state.wantBankMSB = 1;  // Bank 128
+                    state.wantBankLSB = 0;
+                    ESP_LOGI(TAG, "XG: Ch%u set to Drum Kit (Bank 128)", part+1);
+                }
 
-            if (mode == 0) {
-                state.wantBankMSB = 0;
-                state.wantBankLSB = 0;
-                ESP_LOGI(TAG, "XG: Ch%u set to General MIDI (Bank 0)", part+1);
-            } else {
-                state.wantBankMSB = 1;  // Bank 128
-                state.wantBankLSB = 0;
-                ESP_LOGI(TAG, "XG: Ch%u set to Drum Kit (Bank 128)", part+1);
+                applyBankProgram(part);
+                return true;
             }
-
-            applyBankProgram(part);
-            return true;
         }
     }
 	
-	// XG Mono/Poly Mode per-part
-    if (len == 9 &&
-        data[0] == 0xF0 &&
-        data[1] == 0x43 &&
-        data[3] == 0x4C &&
-        data[4] == 0x08 &&
-        // data[5] = part number
-        data[6] == 0x05 &&
-        // data[7] = mode: 00 = Mono, 01 = Poly
-        data[8] == 0xF7) {
-
-        uint8_t part = data[5]; // 0–15 for parts 1–16
-        if (part < 16) {
-            bool mono = (data[7] == 0x00);
-            setChannelMode(part, mono ? ChannelState::MonoRetrig : ChannelState::Poly );
-            ESP_LOGI(TAG, "Received XG Mono/Poly SysEx: Part %u → %s", part + 1, mono ? "Mono" : "Poly");
-            return true;
-        }
-    }
     return false;
+     
 }
 
 fs::FS* Synth::getFileSystem() {
@@ -814,3 +827,24 @@ void Synth::printState() {
     ESP_LOGI(TAG, "active %d/%d ", activeCount, MAX_VOICES);
 
 }
+
+void Synth::updateActivity() {
+    for(auto& chan : channels) {
+        chan.activityUpdate();
+    }
+}
+
+void Synth::getActivityString(char str[49]) {
+    const uint8_t n = 7; 
+    const uint8_t escape =  0xE2;
+    const uint8_t msb =     0x96;
+    const uint8_t lsb =     0x81;
+    for (int i = 0; i < 16; i++) {
+        str[i*3] = escape;
+        uint8_t index = channels[i].activity * (float)n;
+        str[i*3 + 1] = msb ;
+        str[i*3 + 2] = lsb + index;
+    }
+    str[48] = '\0';  
+}
+

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <Arduino.h>
 /**
 * MuxButton is a class that handles buttons
 *
@@ -8,8 +7,8 @@
 *     MuxButton myButton;
 * 
 * 2. Declare the stuff
-*     uint8_t SW; // a variable that will receive a reading result for latter processing
-*     myBtnHandler(int id, MuxButton::btnEvents evt) { // a function that will receive an ID of a fired button, and the event
+*     uint8_t SW;
+*     myBtnHandler(int id, MuxButton::btnEvents evt) {
 *       // id is what you submit via bind()
 *       // evt is one of MuxButton::EVENT_TOUCH, MuxButton::EVENT_PRESS, MuxButton::EVENT_LONGPRESS,
 *       //               MuxButton::EVENT_AUTOCLICK, MuxButton::EVENT_RELEASE, MuxButton::EVENT_CLICK
@@ -25,17 +24,14 @@
 *        myButton.process();
 *     }
 *
+* File: button.h
 * April 2025
 * Author: Evgeny Aslovskiy AKA Copych
 * License: MIT
 */
 
+#ifndef ACTIVE_STATE
 #define ACTIVE_STATE  LOW   // LOW = switch connects to GND, HIGH = switch connects to 3V3
-
-#if ACTIVE_STATE == LOW
-  #define SIG_INPUT_MODE    INPUT_PULLUP  
-#else
-  #define SIG_INPUT_MODE    INPUT_PULLDOWN  
 #endif
 
 class MuxButton {
@@ -49,15 +45,10 @@ class MuxButton {
       _input = input;
       _id = id;
       _callbackFunc = cb;
-/*
-      Serial.print("btn bind ");
-      Serial.print(id);
-      Serial.print(" ");
-      Serial.printf("%#010x\r\n", _input,);
-*/
     }
     
     inline void process() {
+      if (!_input || !_callbackFunc) return;
       buttonState = (*_input == ACTIVE_STATE);
       size_t ms = millis();
         if ( buttonState != oldButtonState) {
@@ -125,11 +116,11 @@ class MuxButton {
     }
 
     inline void setAutoClick(boolean onOff) {
-      autoFireEnabled = onOff ? 1 : 0;
+      autoFireEnabled = onOff;
     }
 
     inline void  enableLateClick(boolean onOff) {
-      lateClickEnabled = onOff ? 1 : 0;
+      lateClickEnabled = onOff;
     }
 
     inline void setRiseTimeMs(uint32_t ms) {
@@ -161,8 +152,8 @@ class MuxButton {
     uint32_t oldButtonState     = 0;              // previous readings              
     uint32_t activeButtons      = 0;              // activity bitmask              
     uint32_t currentMillis;                       // not to call repeatedly within loop
-    uint32_t riseTimer;                           // stores the time that the button was pressed (relative to boot time)
-    uint32_t fallTimer;                           // stores the duration (in milliseconds) that the button was pressed/held down for
+    uint32_t riseTimer          = 0;                           // stores the time that the button was pressed (relative to boot time)
+    uint32_t fallTimer          = 0;                           // stores the duration (in milliseconds) that the button was pressed/held down for
     uint32_t longPressTimer;                      // stores the duration (in milliseconds) that the button was pressed/held down for
     uint32_t autoFireTimer;                       // milliseconds before firing autoclick
     uint32_t autoFireEnabled    = 0;              // should the buttons generate continious clicks when pressed longer than a longPressThreshold

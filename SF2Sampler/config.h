@@ -43,9 +43,10 @@
 //#define ENABLE_IN_VOICE_FILTERS       // comment this out to disable voice SF2 filters
 #define ENABLE_REVERB                 // comment this out to disable reverb 
 #define ENABLE_CHORUS                 // comment this out to disable chorus
-//#define ENABLE_DELAY                  // comment this out to disable delay
-//#define ENABLE_CH_FILTER             // comment this out to disable channel lo-pass stereo filter
 #define ENABLE_CH_FILTER_M           // uncomment this line to mono per-channel filtering before stereo split
+//#define ENABLE_DELAY                  // comment this out to disable delay
+//#define ENABLE_OVERDRIVE             // comment this out to disable overdrive effect
+//#define ENABLE_CH_FILTER             // not recommended, use ENABLE_CH_FILTER_M instead 
 
 #define CH_FILTER_MAX_FREQ 12000.0f
 #define CH_FILTER_MIN_FREQ 50.0f
@@ -72,16 +73,25 @@ static const char* SF2_PATH = "/";
 #define SDMMC_D3  13
 
 // ===================== OLED DISPLAY PINS ==========================================================================
-#define DISPLAY_SDA 8 // SDA GPIO
-#define DISPLAY_SCL 9 // SCL GPIO
+#define ENABLE_GUI
 
-// ===================== OLED DISPLAY CONFIG ========================================================================
-#define DISPLAY_CONTROLLER SH1106
-// #define DISPLAY_CONTROLLER SSD1306
+#ifdef ENABLE_GUI
+  #define DISPLAY_CONTROLLER SH1106
+  // #define DISPLAY_CONTROLLER SSD1306
 
-#define DISPLAY_W 128
-#define DISPLAY_H 64
-#define DISPLAY_ROTATE 0 // can be 0, 90, 180 or 270
+  #define ACTIVE_STATE  LOW   // LOW = switch connects to GND, HIGH = switch connects to 3V3
+
+  #define BTN0_PIN 	14
+  #define ENC0_A_PIN 	16
+  #define ENC0_B_PIN 	15
+
+  #define DISPLAY_SDA 8 // SDA GPIO
+  #define DISPLAY_SCL 9 // SCL GPIO
+
+  #define DISPLAY_W 128
+  #define DISPLAY_H 64
+  #define DISPLAY_ROTATE 0 // can be 0, 90, 180 or 270
+#endif
 
 // ===================== RGB LED ====================================================================================
 // #define ENABLE_RGB_LED
@@ -92,17 +102,18 @@ static const char* SF2_PATH = "/";
 
 // #define TASK_BENCHMARKING
 
+ 
 
 
 
 
 // !!!!!!!!!!!!!=======  DO NOT CHANGE  =======!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // U8G2 CONSTRUCTOR MACROS
-#if (DISPLAY_ROTATE==180)
+#if (DISPLAY_ROTATE == 180)
   #define U8_ROTATE U8G2_R2
-#elseif (DISPLAY_ROTATE==90)
+#elif (DISPLAY_ROTATE == 90)
   #define U8_ROTATE U8G2_R1
-#elseif (DISPLAY_ROTATE==270)
+#elif (DISPLAY_ROTATE == 270)
   #define U8_ROTATE U8G2_R3
 #else
   #define U8_ROTATE U8G2_R0
@@ -115,3 +126,9 @@ static const char* SF2_PATH = "/";
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
+
+#if ACTIVE_STATE == LOW
+  #define SIG_INPUT_MODE    INPUT_PULLUP  
+#else
+  #define SIG_INPUT_MODE    INPUT_PULLDOWN  
+#endif
