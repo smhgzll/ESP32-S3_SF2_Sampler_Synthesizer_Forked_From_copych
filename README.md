@@ -8,6 +8,8 @@ An SF2 (SoundFont 2) based wavetable synth designed specifically for the ESP32-S
 
 The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP32-S3 variant due to its improved PSRAM and memory management compared to the original ESP32. It supports external DACs like the PCM5102 for high-quality audio output and uses the built-in USB hardware of the ESP32-S3 to function as a USB MIDI device. By default, the BOOT button of the DevBoard is configured to cycle through SF2 files on the current filesystem. Long press on BOOT button will switch between Flash LittleFS and SD filesystems.
 
+<img src="./media/prototype.jpg?raw=true">
+
 ---
 
 ## Features
@@ -21,6 +23,7 @@ The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP3
 - **MIDI control**: GM, partially GS/XG-compatible CCs, PC, RPNs, drums on ch.10, GM reset.
 - **External DAC**: Works with PCM5102 and similar I2S DACs.
 - **ESP32-S3 optimized**: Dual-core, PSRAM, minimal wiring.
+- **OLED GUI**: Use a rotary encoder and a button to navigate. 
 
 ---
 
@@ -40,6 +43,9 @@ The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP3
 | DTA    | GPIO6    |
 | WCK    | GPIO7    |
 | CS     | GND      |
+
+These pins can be changed in config.h if needed
+
 ---
 
 
@@ -59,7 +65,21 @@ The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP3
 These pins can be changed in config.h if needed
 
 ---
+## GUI:
 
+| Signal | GPIO Pin |
+|------------|---------------|
+|   button | 14 |
+| encoder pin A | 15 |
+| encoder pin B | 16 |
+| | |
+| display SDA | 8    |
+| display SCL | 9    |
+
+
+These pins can be changed in config.h if needed
+
+---
 ## Software Setup
 
 ### Arduino IDE Configuration
