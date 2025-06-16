@@ -23,7 +23,7 @@ The ESP32-S3 SF2 Sampler is a sampler firmware that runs exclusively on the ESP3
 - **MIDI control**: GM, partially GS/XG-compatible CCs, PC, RPNs, drums on ch.10, GM reset.
 - **External DAC**: Works with PCM5102 and similar I2S DACs.
 - **ESP32-S3 optimized**: Dual-core, PSRAM, minimal wiring.
-- **OLED GUI**: Use a rotary encoder and a button to navigate. 
+- **Optional OLED GUI**: Use a rotary encoder and a button to navigate. 
 
 ---
 
