@@ -25,18 +25,18 @@
 #define ONE_DIV_127           (1.0f / 127.0f)
 
 // ===================== MISC  ======================================================================================
-const float DIV_SAMPLE_RATE     = (1.0f/(float)SAMPLE_RATE);
-const float DIV_12              = (1.0f / 12.0f);
-const float DIV_63              = (1.0f / 63.0f);
-const float DIV_127             = (1.0f / 127.0f);
-const float MIDI_NORM           = (1.0f / 127.0f);
-const float DIV_128             = (1.0f / 128.0f);
-const float DIV_1200            = (1.0f / 1200.0f);
-const float DIV_8192            = (1.0f / 8192.0f);
-const float TWO_DIV_16383       = (2.0f / 16383.0f);
-const float MS_SAMPLE_RATE      = (float)SAMPLE_RATE * 0.001f;
-const float DIV_MS_SAMPLE_RATE  = 1.0f / (float)(MS_SAMPLE_RATE);
-const float SAMPLES_PER_MICROS  = (float)SAMPLE_RATE * 0.000001f;
+const float DRAM_ATTR DIV_SAMPLE_RATE     = (1.0f/(float)SAMPLE_RATE);
+const float DRAM_ATTR DIV_12              = (1.0f / 12.0f);
+const float DRAM_ATTR DIV_63              = (1.0f / 63.0f);
+const float DRAM_ATTR DIV_127             = (1.0f / 127.0f);
+const float DRAM_ATTR MIDI_NORM           = (1.0f / 127.0f);
+const float DRAM_ATTR DIV_128             = (1.0f / 128.0f);
+const float DRAM_ATTR DIV_1200            = (1.0f / 1200.0f);
+const float DRAM_ATTR DIV_8192            = (1.0f / 8192.0f);
+const float DRAM_ATTR TWO_DIV_16383       = (2.0f / 16383.0f);
+const float DRAM_ATTR MS_SAMPLE_RATE      = (float)SAMPLE_RATE * 0.001f;
+const float DRAM_ATTR DIV_MS_SAMPLE_RATE  = 1.0f / (float)(MS_SAMPLE_RATE);
+const float DRAM_ATTR SAMPLES_PER_MICROS  = (float)SAMPLE_RATE * 0.000001f;
 
 // 1.0594630943592952645618252949463 // is a 12th root of 2 (pitch increase per semitone)
 // 1.05952207969042122905182367802396 // stretched tuning (plus 60 cents per 7 octaves)

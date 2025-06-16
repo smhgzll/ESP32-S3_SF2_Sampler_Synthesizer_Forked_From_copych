@@ -29,6 +29,7 @@
 #include <FS.h>
 #include <SD_MMC.h>
 #include <LittleFS.h>
+#include "TLVStorage.h"
 
 #ifdef ENABLE_CH_FILTER_M
     #include "biquad2.h"
@@ -67,10 +68,13 @@ Synth::Synth(SF2Parser& parserRef) : parser(parserRef) {
 }
 
 bool Synth::begin() {
+    if (loadSynthState()) return true;
+
     if (!parser.parse()) {
         ESP_LOGW(TAG, "No SF2 parsed. Auto-loading next SF2...");
         return loadNextSf2();
     }
+
     return true;
 }
 
@@ -354,6 +358,11 @@ void Synth::controlChange(uint8_t ch, uint8_t ctrl, uint8_t val) {
 
 void Synth::applyBankProgram(uint8_t ch) {
     if (ch >= 16) return;
+	
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
+
     auto& state = channels[ch];
     state.clearNoteStack(); 
     const uint8_t program = state.wantProgram;
@@ -397,10 +406,6 @@ void Synth::applyBankProgram(uint8_t ch) {
 
 void Synth::programChange(uint8_t ch, uint8_t program) {
     if (ch >= 16) return;
-    
-#ifdef ENABLE_GUI
-    block_gui();
-#endif
 
     auto& state = channels[ch];
     state.wantProgram = program & 0x7F;
@@ -643,6 +648,11 @@ void Synth::allNotesOff(uint8_t ch) {
 }
 
 void Synth::GMReset() {
+	
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
+
     for (uint8_t ch = 0; ch < 16; ++ch) {
         auto& state = channels[ch];
         state.reset();
@@ -662,6 +672,11 @@ void Synth::GMReset() {
 }
 
 bool Synth::handleSysEx(const uint8_t* data, size_t len) {
+	
+#ifdef ENABLE_GUI
+    block_gui();
+#endif
+
     if (len == 6 &&
         data[0] == 0xF0 &&
         data[1] == 0x7E &&
@@ -795,6 +810,8 @@ bool Synth::loadSf2File(const char* filename) {
     reset();      // Stop voices and reset channels
     GMReset();    // Apply GM defaults
    // parser.dumpPresetStructure();
+ 
+    currentSf2Path = String(fullPath); 
     return true;
 }
 
@@ -839,6 +856,7 @@ void Synth::getActivityString(char str[49]) {
     const uint8_t escape =  0xE2;
     const uint8_t msb =     0x96;
     const uint8_t lsb =     0x81;
+    str[0] = '\0';
     for (int i = 0; i < 16; i++) {
         str[i*3] = escape;
         uint8_t index = channels[i].activity * (float)n;
@@ -848,3 +866,119 @@ void Synth::getActivityString(char str[49]) {
     str[48] = '\0';  
 }
 
+bool Synth::loadSf2ByIndex(int index) {
+    if(index >= 0 && index < sf2Files.size()) {
+        currentFileIndex = index;
+        return loadSf2File(sf2Files[index].c_str());
+    }
+    return false;
+}
+
+bool Synth::saveSynthState(const char* path) {
+
+
+    fs::FS* fs = &SD_MMC;
+    if (!fs) return false;
+    File f = fs->open(path, FILE_WRITE);
+    if (!f) return false;
+
+    // Store current SF2 filename
+    if (!currentSf2Path.isEmpty()) {
+        writeTLV(f, PARAM_SF2_FILENAME, currentSf2Path.c_str(), currentSf2Path.length() + 1);
+    }
+
+    uint8_t fsTypeByte = static_cast<uint8_t>(getCurrentFsType());
+    writeTLV(f, PARAM_SF2_FS_TYPE, &fsTypeByte, 1);
+
+
+    // Channels
+    for (int ch = 0; ch < 16; ++ch) {
+        uint8_t data[3] = {
+            (uint8_t)channels[ch].wantBankMSB,
+            (uint8_t)channels[ch].wantBankLSB,
+            (uint8_t)channels[ch].wantProgram
+        };
+        writeTLV(f, PARAM_CHANNEL(ch), data, 3);
+    }
+
+#ifdef ENABLE_REVERB
+    float rtime = reverb.getTime();
+    float rdamp = reverb.getDamping();
+    writeTLV(f, PARAM_REVERB_TIME, &rtime, sizeof(rtime));
+    writeTLV(f, PARAM_REVERB_DAMP, &rdamp, sizeof(rdamp));
+#endif
+#ifdef ENABLE_DELAY
+    float dtime = delayfx.getDelayTime();
+    writeTLV(f, PARAM_DELAY_TIME, &dtime, sizeof(dtime));
+#endif
+#ifdef ENABLE_CHORUS
+    float cdepth = chorus.getDepth();
+    writeTLV(f, PARAM_CHORUS_DEPTH, &cdepth, sizeof(cdepth));
+#endif
+
+    f.close();
+    return true;
+}
+
+bool Synth::loadSynthState(const char* path) {
+    fs::FS* fs = &SD_MMC;
+    if (!fs) return false;
+    File f = fs->open(path, FILE_READ);
+    if (!f) return false;
+
+    auto map = readTLV(f);
+    f.close();
+
+    for (int ch = 0; ch < 16; ++ch) {
+        auto it = map.find(PARAM_CHANNEL(ch));
+        if (it != map.end() && it->second.len == 3) {
+            auto& b = it->second.data;
+            channels[ch].wantBankMSB = b[0];
+            channels[ch].wantBankLSB = b[1];
+            channels[ch].wantProgram = b[2];
+            applyBankProgram(ch);
+        }
+    }
+
+#ifdef ENABLE_REVERB
+    if (auto it = map.find(PARAM_REVERB_TIME); it != map.end() && it->second.len == 4) {
+        float v; memcpy(&v, it->second.data.data(), 4); reverb.setTime(v);
+    }
+    if (auto it = map.find(PARAM_REVERB_DAMP); it != map.end() && it->second.len == 4) {
+        float v; memcpy(&v, it->second.data.data(), 4); reverb.setDamping(v);
+    }
+#endif
+#ifdef ENABLE_DELAY
+    if (auto it = map.find(PARAM_DELAY_TIME); it != map.end() && it->second.len == 4) {
+        float v; memcpy(&v, it->second.data.data(), 4); delayfx.setDelayTime(v);
+    }
+#endif
+#ifdef ENABLE_CHORUS
+    if (auto it = map.find(PARAM_CHORUS_DEPTH); it != map.end() && it->second.len == 4) {
+        float v; memcpy(&v, it->second.data.data(), 4); chorus.setDepth(v);
+    }
+#endif
+
+    FileSystemType loadedFsType = FileSystemType::LITTLEFS; // default
+
+    if (auto it = map.find(PARAM_SF2_FS_TYPE); it != map.end() && it->second.len == 1) {
+        loadedFsType = static_cast<FileSystemType>(it->second.data[0]);
+    }
+
+
+    if (auto it = map.find(PARAM_SF2_FILENAME); it != map.end() && it->second.len > 0) {
+        const char* name = (const char*)it->second.data.data();
+        fs::FS* fs = (loadedFsType == FileSystemType::SD)
+           ? static_cast<fs::FS*>(&SD_MMC)
+           : static_cast<fs::FS*>(&LittleFS);
+
+        if (fs->exists(name)) {
+            setFileSystem(loadedFsType);
+            loadSf2File(name);  // full path relative to chosen FS
+        } else {
+            ESP_LOGW(TAG, "Saved SF2 not found: %s (FS=%s)", name,
+                    loadedFsType == FileSystemType::SD ? "SD" : "LFS");
+        }
+    }
+    return true;
+}

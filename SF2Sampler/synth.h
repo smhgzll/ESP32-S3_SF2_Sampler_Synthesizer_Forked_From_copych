@@ -51,7 +51,7 @@ public:
     void printState();
     void renderLR(float* sampleL, float* sampleR);
     void GMReset(); 
-    const ChannelState& getChannelState(uint8_t channel) const { return channels[channel]; }
+    ChannelState& getChannelState(uint8_t channel) { return channels[channel]; }
     void setFileSystem(FileSystemType type) { fsType = type; }
     bool loadSf2File(const char* path);
     bool loadNextSf2();
@@ -60,10 +60,19 @@ public:
     void setChannelMode(uint8_t ch, ChannelState::MonoMode mode);
     void getActivityString(char str[49]);
     void updateActivity();
-    
+    const std::vector<String>& getSf2List() const { return sf2Files; }
+    int getCurrentSf2Index() const { return currentFileIndex; }
+    FileSystemType getCurrentFsType() const { return fsType; }
     ChannelState channels[16];
+    bool loadSf2ByIndex(int index);
+    SF2Parser& parser;
+    bool loadSynthState(const char* path=DEFAULT_CONFIG_FILE);
+    bool saveSynthState(const char* path=DEFAULT_CONFIG_FILE);
+    const String& getCurrentSf2Path() const { return currentSf2Path; }
+
 private:
     
+    String currentSf2Path;  // full path of currently loaded SF2 file
     float volume_scaler = 0.5f ;
     int currentFileIndex = -1;
     float pitchBendRatio(int value);
@@ -72,9 +81,6 @@ private:
     Voice* findWorstVoice();
 
     Voice voices[MAX_VOICES];
-
-    SF2Parser& parser;
-    
 
     fs::FS* getFileSystem() ;
 

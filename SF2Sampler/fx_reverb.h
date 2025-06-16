@@ -74,23 +74,29 @@ public:
       predelaySize = size;
       predelayPtr = 0;
     }
-    SetLevel(1.0f);
-    SetTime(0.8f);
-    SetPreDelayTime(10.0f);
-    SetDamping(0.6f);
+    setLevel(1.0f);
+    setTime(0.8f);
+    setPreDelayTime(10.0f);
+    setDamping(0.6f);
   }
 
-  inline void SetPreDelayTime(float ms) {
-    int delaySamples = int((ms / 1000.0f) * SAMPLE_RATE);
+  inline float getTime() const {  return rev_time;  }
+  inline float getLevel() const { return rev_level; }
+  inline float getPreDelayTime() const { return float(delaySamples * 1000.0f * DIV_SAMPLE_RATE); }
+  inline float getDamping() const { return globalDamping; }
+  
+
+  inline void setPreDelayTime(float ms) {
+    delaySamples = int(ms * 0.001f * SAMPLE_RATE);
     if (delaySamples >= predelaySize) delaySamples = predelaySize - 1;
     if (delaySamples < 0) delaySamples = 0;
     predelayReadOffset = (predelayPtr - delaySamples + predelaySize) % predelaySize;
 
-    ESP_LOGI("Reverb", "Pre-delay set to %.1f ms (%d samples)", ms, delaySamples);
+    ESP_LOGD("Reverb", "Pre-delay set to %.1f ms (%d samples)", ms, delaySamples);
   }
 
-  inline void SetTime(float value) {
-    rev_time = 0.92f * value + 0.02f;
+  inline void setTime(float value) {
+    rev_time = 0.998f * value + 0.001f;
     for (int ch = 0; ch < 2; ++ch) {
       for (int i = 0; i < NUM_COMBS; ++i)
         combLim[ch][i] = int(rev_time * combSize[ch][i]);
@@ -99,11 +105,9 @@ public:
     }
   }
 
-  inline void SetLevel(float value) {
-    rev_level = value;
-  }
+  inline void setLevel(float value) {     rev_level = value;   }
   
-  inline void SetDamping(float d) {
+  inline void setDamping(float d) {
     globalDamping = d < 0.0f ? 0.0f : (d > 1.0f ? 1.0f : d);
     for (int i = 0; i < NUM_COMBS; ++i) {
       comb_dampings[i] = globalDamping * comb_damping_coef[i] ;
@@ -156,6 +160,7 @@ private:
   float* predelayBuf = nullptr;
   int predelaySize = 0;
   int predelayPtr = 0;
+  int delaySamples = 0;
   int predelayReadOffset = 0;
   float globalDamping = 0.25f;
 

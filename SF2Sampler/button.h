@@ -144,7 +144,7 @@ class MuxButton {
     }
     
   protected:
-    uint32_t longPressThreshold = 800;            // the threshold (in milliseconds) before a long press is detected 
+    uint32_t longPressThreshold = 550;            // the threshold (in milliseconds) before a long press is detected 
     uint32_t autoFireDelay      = 500;            // the threshold (in milliseconds) between clicks if autofire is enabled 
     uint32_t riseThreshold      = 20;             // the threshold (in milliseconds) for a button press to be confirmed (i.e. debounce, not "noise") 
     uint32_t fallThreshold      = 10;             // debounce, not "noise", also this is the time, while new "touches" won't be registered

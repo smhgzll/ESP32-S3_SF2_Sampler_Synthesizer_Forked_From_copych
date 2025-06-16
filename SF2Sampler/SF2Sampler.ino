@@ -18,7 +18,7 @@
 * More info:
 * https://github.com/copych/SF2_Sampler
 */
-#pragma packed(4)
+#pragma packed(16)
 #pragma GCC optimize ("O3")
 #pragma GCC optimize ("fast-math")
 #pragma GCC optimize ("unsafe-math-optimizations")
@@ -43,6 +43,7 @@ static const char* TAG = "Main";
 #include "SF2Parser.h"
 #include "adsr.h"
 #include "voice.h"
+#include "SynthState.h"
 
 #ifdef ENABLE_RGB_LED
     #include "rgb_led.h"
@@ -93,11 +94,24 @@ I2S_Audio   AudioPort(I2S_Audio::MODE_OUT);
 SF2Parser   parser(SF2_PATH);
 Synth       synth(parser);
 
+// ========================== Synth Settings ===================================================================================
+SynthState state {
+  synth.channels
+#ifdef ENABLE_REVERB
+  , reverb
+#endif
+#ifdef ENABLE_DELAY
+  , delayfx
+#endif
+#ifdef ENABLE_CHORUS
+  , chorus
+#endif
+};
 
 // ========================== GUI ==============================================================================================
 #ifdef ENABLE_GUI
     #include "TextGui.h"
-    TextGUI gui(synth);
+    TextGUI gui(synth, state);
 #endif
 
 // ========================== MIDI handlers ===============================================================================================
@@ -252,7 +266,7 @@ void setup() {
       while(true);
     }
     btStop(); 
-
+    
 #if MIDI_IN_DEV == USE_USB_MIDI_DEVICE
   // Change USB Device Descriptor Parameter
     USB.VID(0x1209);
@@ -291,37 +305,39 @@ void setup() {
         ESP_LOGE(TAG, "LittleFS initialized");
     }
 
+#ifdef ENABLE_GUI
+    gui.begin();
+    gui.busyMessage( "Synth Loading...");
+    ESP_LOGI(TAG, "GUI splash");
+#endif
+
 #ifdef ENABLE_REVERB
     reverb.init();
     ESP_LOGI(TAG, "Reverb FX started");
 #endif
 
 #ifdef ENABLE_DELAY
-    delayfx.Init();
+    delayfx.init();
     ESP_LOGI(TAG, "Delay FX started");
 #endif
  
+
     synth.begin();
     ESP_LOGI(TAG, "Synth is starting");
 
 #ifdef ENABLE_GUI
-    pinMode(ENC0_A_PIN, SIG_INPUT_MODE);
-    pinMode(ENC0_B_PIN, SIG_INPUT_MODE);
-    pinMode(BTN0_PIN, SIG_INPUT_MODE);
-    pinMode(DISPLAY_SDA, INPUT);
-    pinMode(DISPLAY_SCL, INPUT);
-    delay(100);
-    gui.begin();
+    gui.startMenu();
     ESP_LOGI(TAG, "GUI started");
 #endif
+
+    AudioPort.init(I2S_Audio::MODE_OUT);
+    ESP_LOGI(TAG, "I2S Audio port started");
 
 #ifdef ENABLE_RGB_LED
     setupLed();
     ESP_LOGI(TAG, "RGB LED started");
 #endif
 
-    AudioPort.init(I2S_Audio::MODE_OUT);
-    ESP_LOGI(TAG, "I2S Audio port started");
 
     xTaskCreatePinnedToCore( audio_task, "SynthTask", 5000, NULL, 8, &Task1, 0 );
     xTaskCreatePinnedToCore( control_task, "ControlTask", 5000, NULL, 8, &Task2, 1 );

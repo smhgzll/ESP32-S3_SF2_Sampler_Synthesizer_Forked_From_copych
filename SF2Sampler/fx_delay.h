@@ -41,7 +41,7 @@ class FxDelay {
 public:
     FxDelay() {}
 
-    inline void Init() {
+    inline void init() {
         delayLine_l = (float*)heap_caps_calloc(1, sizeof(float) * MAX_DELAY, MALLOC_CAP);
         delayLine_r = (float*)heap_caps_calloc(1, sizeof(float) * MAX_DELAY, MALLOC_CAP);
 
@@ -51,10 +51,10 @@ public:
             ESP_LOGI("Delay","DELAY: Memory allocated");
         }
 
-        Reset();
+        reset();
     }
 
-    inline void Reset() {
+    inline void reset() {
         for (int i = 0; i < MAX_DELAY; ++i) {
             delayLine_l[i] = 0.0f;
             delayLine_r[i] = 0.0f;
@@ -65,11 +65,11 @@ public:
         mode = DelayMode::Normal;
     }
 
-    inline void SetFeedback(float value) {
+    inline void setFeedback(float value) {
         delayFeedback = fclamp(value, 0.0f, 0.95f);
     }
 
-    inline void SetDelayTime(DelayTimeDiv div, float bpm) {
+    inline void setDelayTime(DelayTimeDiv div, float bpm) {
         float secondsPerBeat = 60.0f / bpm;
         float seconds = secondsPerBeat;
 
@@ -87,13 +87,21 @@ public:
         delayLen = fclamp((uint32_t)(seconds * SAMPLE_RATE), 1, MAX_DELAY - 1);
     }
 
-    inline void SetCustomLength(float seconds) {
+    inline void setCustomLength(float seconds) {
         delayLen = fclamp((uint32_t)(seconds * SAMPLE_RATE), 1, MAX_DELAY - 1);
     }
 
-    inline void SetMode(DelayMode m) {
+    inline void setMode(DelayMode m) {
         mode = m;
     }
+
+    inline float getFeedback() { return delayFeedback; }
+    inline float getDelayTime() { return delayLen * (1.0f / SAMPLE_RATE); }
+    inline float getDelayTimeBPM() { return 60.0f / (delayLen * (1.0f / SAMPLE_RATE)); }
+    inline uint32_t getDelayLength() { return delayLen; }
+    inline DelayMode getMode() { return mode; }
+    inline DelayTimeDiv getDelayTimeDiv() { return DelayTimeDiv::Custom; }
+
 
     inline void  __attribute__((hot,always_inline)) IRAM_ATTR ProcessBlock(float* buffer_l, float* buffer_r) {
         for (int i = 0; i < DMA_BUFFER_LEN; ++i) {

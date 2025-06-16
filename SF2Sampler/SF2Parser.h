@@ -143,6 +143,7 @@ public:
     std::vector<SampleHeader>& getSamples();
     std::vector<Zone> getZonesForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program);
     std::vector<SF2Preset> & getPresets() { return presets; } 
+    const std::vector<SF2Preset>& getPresets() const { return presets; } 
     void dumpPresetStructure() ;
     bool hasPreset(uint16_t bank, uint16_t program) const ;
     void clear();

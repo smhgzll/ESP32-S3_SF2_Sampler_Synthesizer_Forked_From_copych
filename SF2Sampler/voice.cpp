@@ -170,7 +170,7 @@ void Voice::updatePitchOnly(uint8_t newNote, ChannelState* chan) {
     note = newNote;
     
     updatePitch();
-    ESP_LOGI(TAG, "Pitch recalc v_id %d portaFactor %.5f", id, portamentoFactor);
+    ESP_LOGD(TAG, "Pitch recalc v_id %d portaFactor %.5f", id, portamentoFactor);
 }
 
 

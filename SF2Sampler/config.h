@@ -34,9 +34,10 @@
 #define   USE_USB_MIDI_DEVICE   1     // definition: the synth appears as a USB MIDI Device "S3 SF2 Synth"
 #define   USE_MIDI_STANDARD     2     // definition: the synth receives MIDI messages via serial 31250 bps
 #define   MIDI_IN_DEV           USE_USB_MIDI_DEVICE     // select the appropriate (one of the above) 
+#define   NUM_MIDI_CHANNELS		16
 
 // ===================== SYNTHESIZER ================================================================================
-#define MAX_VOICES 20 // for now 20 is max for per-channel filtering + chorus + reverb
+#define MAX_VOICES 19 // for now 20 is max for per-channel filtering + chorus + reverb
 #define MAX_VOICES_PER_NOTE 2
 #define PITCH_BEND_CENTER 0
 
@@ -53,7 +54,7 @@
 #define FILTER_MAX_Q 7.0f
 
 static const char* SF2_PATH = "/"; 
-
+#define DEFAULT_CONFIG_FILE "/default_config.bin"
 // ===================== MIDI PINS ==================================================================================
 #define MIDI_IN         15      // if USE_MIDI_STANDARD is selected as MIDI_IN, this pin receives MIDI messages
 
@@ -72,7 +73,7 @@ static const char* SF2_PATH = "/";
 #define SDMMC_D2  12
 #define SDMMC_D3  13
 
-// ===================== OLED DISPLAY PINS ==========================================================================
+// ===================== GUI SETTINGS ==========================================================================
 #define ENABLE_GUI
 
 #ifdef ENABLE_GUI
@@ -82,8 +83,8 @@ static const char* SF2_PATH = "/";
   #define ACTIVE_STATE  LOW   // LOW = switch connects to GND, HIGH = switch connects to 3V3
 
   #define BTN0_PIN 	14
-  #define ENC0_A_PIN 	16
-  #define ENC0_B_PIN 	15
+  #define ENC0_A_PIN 	15
+  #define ENC0_B_PIN 	16
 
   #define DISPLAY_SDA 8 // SDA GPIO
   #define DISPLAY_SCL 9 // SCL GPIO

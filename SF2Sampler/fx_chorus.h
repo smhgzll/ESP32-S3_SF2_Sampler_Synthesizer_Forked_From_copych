@@ -27,6 +27,7 @@ public:
         setLfoFreq(0.5f);
         setDepth(0.002f);
         setBaseDelay(0.03f);
+
     }
     
     inline void  __attribute__((hot,always_inline)) IRAM_ATTR processBlock(float* left, float* right) {
@@ -61,6 +62,10 @@ public:
     void setLfoFreq(float freq) { lfoFreq = freq; }
     void setDepth(float d) { depth = d; }
     void setBaseDelay(float delay) { baseDelay = delay; }
+
+    inline float getLfoFreq() { return lfoFreq; }
+    inline float getDepth() { return depth; }
+    inline float getBaseDelay() { return baseDelay; }
 
 private:
     static const int MAX_DELAY = 4096;

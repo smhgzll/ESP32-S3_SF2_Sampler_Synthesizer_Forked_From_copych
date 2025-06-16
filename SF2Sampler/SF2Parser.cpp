@@ -680,6 +680,7 @@ bool SF2Parser::loadSampleDataToMemory() {
     SampleHeader* fallback = nullptr;
 
     for (size_t i = 0; i < samples.size(); ++i) {
+
         auto& s = samples[i];
         uint32_t length = (s.end > s.start) ? (s.end - s.start) : 0;
 
