@@ -80,6 +80,7 @@ public:
     setDamping(0.6f);
   }
 
+  inline float getTimeRaw() const {  return (rev_time - 0.02f)/0.97f;  }
   inline float getTime() const {  return rev_time;  }
   inline float getLevel() const { return rev_level; }
   inline float getPreDelayTime() const { return float(delaySamples * 1000.0f * DIV_SAMPLE_RATE); }
@@ -96,7 +97,7 @@ public:
   }
 
   inline void setTime(float value) {
-    rev_time = 0.998f * value + 0.001f;
+    rev_time = 0.97f * value + 0.02f;
     for (int ch = 0; ch < 2; ++ch) {
       for (int i = 0; i < NUM_COMBS; ++i)
         combLim[ch][i] = int(rev_time * combSize[ch][i]);

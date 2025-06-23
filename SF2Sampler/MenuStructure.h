@@ -183,7 +183,7 @@ std::vector<MenuItem> createReverbMenu(SynthState& state) {
             0 , 100 , 1  ),
             
         MenuItem::Value("Time",
-            [&state]() { return (int)(state.reverb.getTime() * 100.0f); }, 
+            [&state]() { return (int)(state.reverb.getTimeRaw() * 100.0f); }, 
             [&state](int v) { state.reverb.setTime( ((float)v + 0.5f) / 100.0f ); },
             1, 100, 1), 
             

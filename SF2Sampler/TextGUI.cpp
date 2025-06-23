@@ -1,8 +1,9 @@
 #include "TextGUI.h"
 #include "MenuStructure.h"
+
+#include <functional>
 #include <new> 
 
-using CustomDrawFn = std::function<void(TextGUI&, U8G2&, int, int)>;
 
 MenuItem::MenuItem() {
     type = MenuItemType::ACTION;
@@ -19,21 +20,21 @@ MenuItem::MenuItem(const MenuItem& other) {
     title = other.title;
     type = other.type;
     switch (type) {
-        case MenuItem::MenuItemType::VALUE:
-        case MenuItem::MenuItemType::TOGGLE:
+        case MenuItemType::VALUE:
+        case MenuItemType::TOGGLE:
             new (&value.getter) ValueGetter(other.value.getter);
             new (&value.setter) ValueSetter(other.value.setter);
             value.min = other.value.min;
             value.max = other.value.max;
             value.step = other.value.step;
             break;
-        case MenuItem::MenuItemType::SUBMENU:
+        case MenuItemType::SUBMENU:
             new (&submenu.generator) MenuGenerator(other.submenu.generator);
             break;
-        case MenuItem::MenuItemType::ACTION:
+        case MenuItemType::ACTION:
             new (&command.action) MenuAction(other.command.action);
             break;
-        case MenuItem::MenuItemType::CUSTOM:
+        case MenuItemType::CUSTOM:
             new (&custom.customDraw) decltype(custom.customDraw)(other.custom.customDraw);
             new (&custom.customAction) MenuAction(other.custom.customAction);
             break;
@@ -66,18 +67,18 @@ MenuItem::~MenuItem() {
 
 void MenuItem::destroyCurrent() {
     switch (type) {
-        case MenuItem::MenuItemType::VALUE:
-        case MenuItem::MenuItemType::TOGGLE:
+        case MenuItemType::VALUE:
+        case MenuItemType::TOGGLE:
             value.getter.~ValueGetter();
             value.setter.~ValueSetter();
             break;
-        case MenuItem::MenuItemType::SUBMENU:
+        case MenuItemType::SUBMENU:
             submenu.generator.~MenuGenerator();
             break;
-        case MenuItem::MenuItemType::ACTION:
+        case MenuItemType::ACTION:
             command.action.~MenuAction();
             break;
-        case MenuItem::MenuItemType::CUSTOM: 
+        case MenuItemType::CUSTOM: 
             custom.customDraw.~CustomDrawFn();
             custom.customAction.~MenuAction();
             break;
@@ -290,13 +291,13 @@ void TextGUI::renderMenu() {
         
         // Item rendering
         switch (item.type) {
-            case MenuItem::MenuItemType::TOGGLE:
+            case MenuItemType::TOGGLE:
                 display.drawUTF8(8, y, item.title ? item.title.c_str() : "");
                 display.drawUTF8(display.getDisplayWidth() - display.getUTF8Width("[X]"), y, 
                                  item.value.getter() ? "[X]" : "[ ]");
                 break;
                 
-            case MenuItem::MenuItemType::VALUE: {
+            case MenuItemType::VALUE: {
                 int value = item.value.getter();
                 display.drawUTF8(8, y,item.title ? item.title.c_str() : "");
                 String valStr = (i == cursorPos && editingValue) ? ">" + String(value) + "<" : " " + String(value) + " ";
@@ -305,7 +306,7 @@ void TextGUI::renderMenu() {
                 break;
             }
                 
-            case MenuItem::MenuItemType::CUSTOM:
+            case MenuItemType::CUSTOM:
                 if (item.custom.customDraw) {
                     item.custom.customDraw(*this, display, 8, y);
                 } else {
@@ -315,7 +316,7 @@ void TextGUI::renderMenu() {
                 
             default:
                 display.drawUTF8(8, y, item.title ? item.title.c_str() : "");
-                if (item.type == MenuItem::MenuItemType::SUBMENU) {
+                if (item.type == MenuItemType::SUBMENU) {
                     display.drawUTF8(display.getDisplayWidth() - 8, y, ">");
                 }
                 break;
@@ -359,7 +360,7 @@ void TextGUI::goBack() {
 void TextGUI::refreshCurrentMenu() {
     if (!menuStack.empty() && !menuStack.back().items.empty()) {
         auto& current = menuStack.back();
-        if (current.items[0].type == MenuItem::MenuItemType::SUBMENU && current.items[0].submenu.generator) {
+        if (current.items[0].type == MenuItemType::SUBMENU && current.items[0].submenu.generator) {
             current.items = current.items[0].submenu.generator();
             needsRedraw = true;
         }
@@ -376,29 +377,29 @@ void TextGUI::onButtonEvent(MuxButton::btnEvents evt) {
     
     if (evt == MuxButton::EVENT_CLICK) {
         switch (item.type) {
-            case MenuItem::MenuItemType::SUBMENU:
+            case MenuItemType::SUBMENU:
                 if (item.submenu.generator) {
                     enterSubmenu(item.submenu.generator(), item.title);
                 }
                 break;
                 
-            case MenuItem::MenuItemType::ACTION:
+            case MenuItemType::ACTION:
                 if (item.command.action) {
                     item.command.action(*this);
                 }
                 break;
                 
-            case MenuItem::MenuItemType::TOGGLE:
+            case MenuItemType::TOGGLE:
                 item.value.setter(!item.value.getter());
                 needsRedraw = true;
                 break;
 
-            case MenuItem::MenuItemType::VALUE:
+            case MenuItemType::VALUE:
                 editingValue = !editingValue;  // Toggle edit mode
                 needsRedraw = true;
                 break;
 
-            case MenuItem::MenuItemType::CUSTOM:
+            case MenuItemType::CUSTOM:
                 if (item.custom.customAction) {
                     item.custom.customAction(*this);
                 }
@@ -421,7 +422,7 @@ void TextGUI::onEncoderTurn(int direction) {
     // Handle value adjustment for value-type items
     if (cursorPos >= 0 && cursorPos < current.items.size()) {
         auto& item = current.items[cursorPos];
-        if (item.type == MenuItem::MenuItemType::VALUE && editingValue) {
+        if (item.type == MenuItemType::VALUE && editingValue) {
             adjustValue(direction, item);
             return;
         }
@@ -441,7 +442,7 @@ void TextGUI::onEncoderTurn(int direction) {
 }
 
 void TextGUI::adjustValue(int direction, MenuItem& item) {
-    if (item.type != MenuItem::MenuItemType::VALUE || !item.value.setter) return;
+    if (item.type != MenuItemType::VALUE || !item.value.setter) return;
     
     int current = item.value.getter();
     int newValue = current + (direction * item.value.step);

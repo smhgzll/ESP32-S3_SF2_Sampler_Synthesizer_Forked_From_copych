@@ -1,7 +1,8 @@
 #pragma once
+#include "config.h"
+
 #ifdef ENABLE_GUI
 
-#include "config.h"
 #include <U8g2lib.h>
 #include <functional>
 #include <vector>
@@ -12,9 +13,13 @@
 #include "SynthState.h"
 
 // Forward declarations
+class U8G2;
 class TextGUI;
+class MenuItem;
 class Synth;
 class SynthState;
+
+using CustomDrawFn = std::function<void(TextGUI&, U8G2&, int, int)>; 
 
 // MenuContext declaration
 struct MenuContext {
@@ -35,7 +40,7 @@ enum class MenuItemType {
 
 class MenuItem {
 public:
-    enum class MenuItemType { ACTION, VALUE, TOGGLE, SUBMENU, CUSTOM };
+   // enum class MenuItemType { ACTION, VALUE, TOGGLE, SUBMENU, CUSTOM };
     using MenuAction = std::function<void(TextGUI&)>;
     using ValueGetter = std::function<int()>;
     using ValueSetter = std::function<void(int)>;
