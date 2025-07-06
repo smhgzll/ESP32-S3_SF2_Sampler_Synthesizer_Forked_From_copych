@@ -67,6 +67,8 @@ These pins can be changed in config.h if needed
 ---
 ## GUI:
 
+GUI requires U8g2 library.
+
 | Signal | GPIO Pin |
 |------------|---------------|
 |   button | 14 |
