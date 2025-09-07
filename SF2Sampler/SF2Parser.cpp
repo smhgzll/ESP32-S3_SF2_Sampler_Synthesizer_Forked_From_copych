@@ -26,6 +26,22 @@
 #include "esp_log.h"
 #include "operators.h"
 
+extern SdFs SD;  // main.cpp’de global var
+
+// --- SdFat için birleşik I/O makroları ---
+#ifdef FILE_READ      // FS.h'nin tanımıyla çakışmayı engelle
+#undef FILE_READ
+#endif
+
+// Tamamı SdFat üstünden
+#define SF2IO_OPEN_READ(fp, path)   ((fp).close(), (fp).open((path), O_RDONLY))
+#define SF2IO_READ(fp, buf, n)      ((fp).read((void*)(buf), (size_t)(n)))
+#define SF2IO_SEEK_SET(fp, pos)     ((fp).seekSet((uint32_t)(pos)))
+#define SF2IO_SEEK_CUR(fp, off)     ((fp).seekCur((int32_t)(off)))
+#define SF2IO_TELL(fp)              ((uint32_t)(fp).curPosition())
+#define SF2IO_SIZE(fp)              ((uint32_t)(fp).fileSize())
+#define SF2IO_AVAIL(fp)             ((int)((fp).fileSize() - (fp).curPosition()))
+
 static const char* TAG = "SF2Parser";
 
 static float timecentsToSec(int tc) {
@@ -82,15 +98,13 @@ void decodeGeneratorAmount(Generator& gen, uint16_t raw) {
 }
 
 
-SF2Parser::SF2Parser(const char* path, fs::FS* fs) : filepath(path), filesystem(fs) {}
+SF2Parser::SF2Parser(const char* path) : filepath(path) {}
+
 
 bool SF2Parser::parse() {
     clear();
-    //file = LittleFS.open(filepath, "r");
-    file = filesystem->open(filepath, "r");
-
-    if (!file){ 
-        ESP_LOGE(TAG, "Error: File not found");
+        if (!SF2IO_OPEN_READ(file, filepath.c_str())) {
+        ESP_LOGE("SF2Parser", "Error: File not found: %s", filepath.c_str());
         return false;
     }
     if (!parseHeaderChunks()) {
@@ -124,7 +138,7 @@ bool SF2Parser::parse() {
 }
 
 void SF2Parser::seekTo(uint32_t offset) {
-    file.seek(offset, SeekSet);
+    SF2IO_SEEK_SET(file, offset);
 }
 
 bool SF2Parser::parseHeaderChunks() {
@@ -156,7 +170,7 @@ bool SF2Parser::parseHeaderChunks() {
             if (strncmp(listType, "sdta", 4) == 0) {
                 sdtaOffset = file.position();
                 sdtaSize = size - 4;
-                file.seek(sdtaSize, SeekCur);
+                SF2IO_SEEK_CUR(file, sdtaSize);
             } else if (strncmp(listType, "pdta", 4) == 0) {
                 pdtaOffset = file.position();
                 pdtaSize = size - 4;
@@ -164,10 +178,10 @@ bool SF2Parser::parseHeaderChunks() {
                 return true;
             } else {
                 if (size < 4) break;
-                file.seek(size - 4, SeekCur);
+                SF2IO_SEEK_CUR(file, size - 4);
             }
         } else {
-            file.seek(size, SeekCur);
+            SF2IO_SEEK_CUR(file, size);
         }
     }
 
@@ -268,12 +282,12 @@ bool SF2Parser::parsePDTA() {
         }
         else {
             ESP_LOGW(TAG, "Unknown PDTA chunk id: %.4s, skipping", id);
-            file.seek(size, SeekCur);
+            SF2IO_SEEK_CUR(file, size);
         }
 
         // Padding for odd sizes
         if (size % 2 != 0) {
-            file.seek(1, SeekCur);
+            SF2IO_SEEK_CUR(file, 1);
         }
 
         ESP_LOGD(TAG, "Chunk %.4s processed. Current pos: %u", id, file.position());
@@ -734,7 +748,7 @@ bool SF2Parser::loadSampleDataToMemory() {
 void SF2Parser::clear() {
     for (auto& sample : samples) {
         if (sample.data) {
-            heap_caps_aligned_free(sample.data);
+            heap_caps_free(sample.data);
             sample.data = nullptr;
             sample.dataSize = 0;
         }

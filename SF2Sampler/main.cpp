@@ -36,7 +36,6 @@ static const char* TAG = "Main";
 #include "misc.h" 
 #include "esp_log.h"
 #include <FS.h>
-#include "SD_MMC.h"
 #include <LittleFS.h>
 #include <MIDI.h>
 #include "synth.h"
@@ -44,6 +43,16 @@ static const char* TAG = "Main";
 #include "adsr.h"
 #include "voice.h"
 #include "SynthState.h"
+#include <SdFat.h>
+#include "esp_pm.h"       // PM lock (CPU frekansını sabitlemek için)
+#include "esp_timer.h"    // esp_timer_get_time()
+#include <WiFi.h>   // Wi-Fi off için
+
+static esp_pm_lock_handle_t s_pm_lock = nullptr;
+
+SdFs SD;
+
+#define SD_MMC SD
 
 #ifdef ENABLE_RGB_LED
     #include "rgb_led.h"
@@ -53,7 +62,14 @@ static const char* TAG = "Main";
     #include "src/usbmidi/src/USB-MIDI.h"
 #endif
 
+// I2S örnekleme oranı. Projede farklıysa burayı aynı yap.
+#ifndef AUDIO_SAMPLE_RATE
+#define AUDIO_SAMPLE_RATE SAMPLE_RATE
+#endif
+
 #include "i2s_in_out.h" 
+
+bool g_audio_ok = false;
 
 // tasks for Core0 and Core1
 TaskHandle_t Task1;
@@ -110,9 +126,19 @@ SynthState state {
 
 // ========================== GUI ==============================================================================================
 #ifdef ENABLE_GUI
-    #include "TextGui.h"
+    #include "TextGUI.h"
     TextGUI gui(synth, state);
 #endif
+
+static void lockCpu240() {
+  // CPU frekansını maksimumda kilitle (dinamik düşmeyi engeller)
+  if (!s_pm_lock) {
+    esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "audio", &s_pm_lock);
+  }
+  if (s_pm_lock) {
+    esp_pm_lock_acquire(s_pm_lock);
+  }
+}
 
 // ========================== MIDI handlers ===============================================================================================
 void handleNoteOn(byte ch, byte note, byte vel) {
@@ -156,14 +182,11 @@ void handleSystemExclusive( uint8_t* data, size_t len) {
     float DRAM_ATTR blockL[DMA_BUFFER_LEN];
     float DRAM_ATTR blockR[DMA_BUFFER_LEN];
 
-
 // ========================== Core 0 Task 1 ===============================================================================================
 // Core0 task -- AUDIO
 static void IRAM_ATTR audio_task(void *userData) {
     vTaskDelay(20); 
     ESP_LOGI(TAG, "Starting Task1");
-
-
 
     while (true) {
         
@@ -171,17 +194,13 @@ static void IRAM_ATTR audio_task(void *userData) {
         t0 = esp_cpu_get_cycle_count();
 #endif
 
-
         synth.renderLRBlock(blockL, blockR);
-
 
 #ifdef TASK_BENCHMARKING
         t1 = esp_cpu_get_cycle_count();
 #endif
 
-
         AudioPort.writeBuffers(blockL, blockR);
-
 
 #ifdef TASK_BENCHMARKING
         t2 = esp_cpu_get_cycle_count();
@@ -194,19 +213,16 @@ static void IRAM_ATTR audio_task(void *userData) {
     }
 }
 
-
 // ========================== Core 1 Task 2 ===============================================================================================
 static void IRAM_ATTR control_task(void *userData) { 
     vTaskDelay(50);
     ESP_LOGI(TAG, "Starting Task2");
     
     while (true) { 
+        //for (int k = 0; k < 8 && MIDI.read(); ++k) { /* drain MIDI */ }
         MIDI.read();
         synth.updateScores();
-#ifdef ENABLE_RGB_LED
-        updateLed();
-#endif
-        vTaskDelay(1);
+        vTaskDelay(1); 
         taskYIELD();
 
 #ifdef ENABLE_GUI
@@ -238,7 +254,6 @@ static void IRAM_ATTR control_task(void *userData) {
             synth.updateActivity();
             frame_count  = 0;
         }
-
     }
 }
 
@@ -260,12 +275,15 @@ static void IRAM_ATTR gui_task(void *userData) {
 
 // ========================== SETUP ===============================================================================================
 void setup() {
+    //lockCpu240();
     if (!psramFound()) {
       ESP_LOGE(TAG, "PSRAM not found!");
       vTaskDelay(10);
       while(true);
     }
     btStop(); 
+    WiFi.mode(WIFI_OFF);    // RF yüke girmesin
+    esp_log_level_set("*", ESP_LOG_WARN); 
     
 #if MIDI_IN_DEV == USE_USB_MIDI_DEVICE
   // Change USB Device Descriptor Parameter
@@ -291,18 +309,14 @@ void setup() {
     delay(800);
     ESP_LOGI(TAG, "MIDI started");
 
-  //  SDMMC.setPins(SDMMC_CLK, SDMMC_CMD, SDMMC_D0, SDMMC_D1, SDMMC_D2, SDMMC_D3)
-    SD_MMC.setPins(SDMMC_CLK, SDMMC_CMD, SDMMC_D0, SDMMC_D1, SDMMC_D2, SDMMC_D3);
-    if (!SD_MMC.begin()) {
-        ESP_LOGE(TAG, "SD init failed");
-    } else {
-        ESP_LOGE(TAG, "SD initialized");
-    }
+    SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
 
-    if (!LittleFS.begin()) {
-        ESP_LOGE(TAG, "LittleFS init failed");
+    SdSpiConfig sdCfg(SD_CS, SHARED_SPI, SD_SCK_MHZ(4), &SPI);
+
+    if (!SD.begin(sdCfg)) {
+        ESP_LOGE(TAG, "SD init failed (SdFat)");
     } else {
-        ESP_LOGE(TAG, "LittleFS initialized");
+        ESP_LOGI(TAG, "SD initialized (SdFat)");
     }
 
 #ifdef ENABLE_GUI
@@ -330,20 +344,19 @@ void setup() {
     ESP_LOGI(TAG, "GUI started");
 #endif
 
-    AudioPort.init(I2S_Audio::MODE_OUT);
-    ESP_LOGI(TAG, "I2S Audio port started");
+  AudioPort.init(I2S_Audio::MODE_OUT);
+  g_audio_ok = true;
+  ESP_LOGI(TAG, "I2S init: %s", g_audio_ok ? "OK" : "FAILED");
 
 #ifdef ENABLE_RGB_LED
     setupLed();
     ESP_LOGI(TAG, "RGB LED started");
 #endif
 
-
-    xTaskCreatePinnedToCore( audio_task, "SynthTask", 5000, NULL, 8, &Task1, 0 );
-    xTaskCreatePinnedToCore( control_task, "ControlTask", 5000, NULL, 8, &Task2, 1 );
-
+    xTaskCreatePinnedToCore(audio_task,   "SynthTask",   8192, NULL, 8, &Task1, 1); // Core1
+    xTaskCreatePinnedToCore(control_task, "ControlTask", 8192, NULL,  8, &Task2, 0); // Core0
 #ifdef ENABLE_GUI
-    xTaskCreatePinnedToCore( gui_task, "GUITask", 5000, NULL, 5, &Task3, 1 );
+    xTaskCreatePinnedToCore(gui_task,     "GUITask",     5000, NULL,  5, &Task3, 1);
 #endif
 
     vTaskDelay(30);

@@ -31,6 +31,9 @@
 #include <LittleFS.h>
 #include "TLVStorage.h"
 
+#include <SdFat.h>
+extern SdFs SD;   // main.cpp’de tanıml
+
 #ifdef ENABLE_CH_FILTER_M
     #include "biquad2.h"
 #endif
@@ -50,6 +53,11 @@
     extern FxDelay delayfx;
 #endif
 
+inline int countActiveVoicesFast(const Voice* voices, int max) {
+    int c = 0;
+    for (int i = 0; i < max; ++i) if (voices[i].active) ++c;
+    return c;
+}
 
 static const char* TAG = "Synth";
 
@@ -753,65 +761,55 @@ bool Synth::handleSysEx(const uint8_t* data, size_t len) {
 fs::FS* Synth::getFileSystem() {
     switch (fsType) {
         case FileSystemType::LITTLEFS: return &LittleFS;
-        case FileSystemType::SD: return &SD_MMC;
+        case FileSystemType::SD:
+        return nullptr;   // SdFat yolunu kullanacağız
         default: return nullptr;
     }
 }
 
 void Synth::scanSf2Files() {
     sf2Files.clear();
-    fs::FS* fs = getFileSystem();
-    if (!fs) return;
 
-    File dir = fs->open(SF2_PATH);
-    if (!dir || !dir.isDirectory()) {
+    FsFile dir;
+    if (!dir.open(SF2_PATH, O_RDONLY)) {
         ESP_LOGE("Synth", "Can't open directory %s", SF2_PATH);
+        currentFileIndex = -1;
         return;
     }
 
-    File entry;
-    while ((entry = dir.openNextFile())) {
-        String name = entry.name();
-        String lower = name;
-        lower.toLowerCase();
-        if (!entry.isDirectory() && lower.endsWith(".sf2")) {
-            sf2Files.push_back(name);
+    for (FsFile e; e.openNext(&dir, O_RDONLY); ) {
+        if (e.isDir()) { e.close(); continue; }
+
+        char name[128] = {0};
+        e.getName(name, sizeof(name));   // sadece dosya adı (klasörsüz)
+        String s = String(name);
+        String lower = s; lower.toLowerCase();
+        if (lower.endsWith(".sf2")) {
+            sf2Files.push_back(s);       // sadece adı saklıyoruz
         }
+        e.close();
     }
 
     dir.close();
-    currentFileIndex = -1;
+    currentFileIndex = sf2Files.empty() ? -1 : 0;
 }
 
 bool Synth::loadSf2File(const char* filename) {
-    
-    parser.clear();
-    ESP_LOGI(TAG, "\n\nFree heap: %u, PSRAM: %u\n\n", heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    String fullPath = String(SF2_PATH);
+    if (filename[0] != '/') fullPath += '/';
+    fullPath += filename;
 
-    fs::FS* fs = getFileSystem();
-    if (!fs) {
-        ESP_LOGE("Synth", "Filesystem not initialized");
-        return false;
-    }
-
-    reset();
-
-    String fullPath = String(SF2_PATH) + filename;
     ESP_LOGI("Synth", "\n\nLoading SF2: %s\n\n", fullPath.c_str());
 
-    SF2Parser tempParser(fullPath.c_str(), fs);
+    SF2Parser tempParser(fullPath.c_str());
     if (!tempParser.parse()) {
         ESP_LOGE("Synth", "Failed to parse %s", fullPath.c_str());
         return false;
     }
 
     parser = std::move(tempParser);
-
-    reset();      // Stop voices and reset channels
-    GMReset();    // Apply GM defaults
-   // parser.dumpPresetStructure();
- 
-    currentSf2Path = String(fullPath); 
+    reset();
+    GMReset();
     return true;
 }
 

@@ -29,7 +29,10 @@
 #include <vector>
 #include <map>
 
-#include <LittleFS.h>
+#include <SdFat.h>
+extern SdFs SD;
+
+using SfFileT = FsFile;    // SdFat dosya tipi
 
 struct __attribute__((packed)) Generator {
     uint16_t oper;
@@ -138,7 +141,7 @@ struct SF2Preset {
 
 class SF2Parser {
 public:
-    SF2Parser(const char* path, fs::FS* fs = &LittleFS);
+    explicit SF2Parser(const char* path);
     bool parse();
     std::vector<SampleHeader>& getSamples();
     std::vector<Zone> getZonesForNote(uint8_t note, uint8_t velocity, uint16_t bank, uint16_t program);
@@ -160,9 +163,9 @@ private:
     bool loadSampleDataToMemory();
     void applyGenerators(const std::vector<Generator>& gens, Zone& zone) ;
 
-    File file;
-    String filepath;
-    
+    FsFile      file;
+    String      filepath;
+
     fs::FS* filesystem;
     std::vector<SampleHeader> samples;
     std::vector<Zone> zones; 

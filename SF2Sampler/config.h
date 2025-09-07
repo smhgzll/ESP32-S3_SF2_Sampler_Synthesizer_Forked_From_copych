@@ -41,8 +41,8 @@
 #define MAX_VOICES_PER_NOTE 2
 #define PITCH_BEND_CENTER 0
 
-//#define ENABLE_IN_VOICE_FILTERS       // comment this out to disable voice SF2 filters
-#define ENABLE_REVERB                 // comment this out to disable reverb 
+#define ENABLE_IN_VOICE_FILTERS       // comment this out to disable voice SF2 filters
+//#define ENABLE_REVERB                 // comment this out to disable reverb 
 #define ENABLE_CHORUS                 // comment this out to disable chorus
 #define ENABLE_CH_FILTER_M           // uncomment this line to mono per-channel filtering before stereo split
 //#define ENABLE_DELAY                  // comment this out to disable delay
@@ -53,7 +53,7 @@
 #define CH_FILTER_MIN_FREQ 50.0f
 #define FILTER_MAX_Q 7.0f
 
-static const char* SF2_PATH = "/"; 
+static const char* SF2_PATH = "/sf2"; 
 #define DEFAULT_CONFIG_FILE "/default_config.bin"
 // ===================== MIDI PINS ==================================================================================
 #define MIDI_IN         15      // if USE_MIDI_STANDARD is selected as MIDI_IN, this pin receives MIDI messages
@@ -64,14 +64,11 @@ static const char* SF2_PATH = "/";
 #define I2S_WCLK_PIN    7       // I2S WORD CLOCK pin (WCK WCL LCK)
 #define I2S_DIN_PIN     -1      // MCU Data In: connect to periph. DATA OUT (DOUT D SD)
 
-// ===================== SD MMC PINS ================================================================================
-// ESP32S3 allows almost any GPIOs for any particular needs
-#define SDMMC_CMD 38
-#define SDMMC_CLK 39
-#define SDMMC_D0  10
-#define SDMMC_D1  11
-#define SDMMC_D2  12
-#define SDMMC_D3  13
+// ===================== SD SPI PINS ================================================================================
+#define SD_CS   10
+#define SD_SCK  12
+#define SD_MOSI 11
+#define SD_MISO 13
 
 // ===================== GUI SETTINGS ==========================================================================
 #define ENABLE_GUI
@@ -102,11 +99,6 @@ static const char* SF2_PATH = "/";
 // ===================== DEBUGGING ==================================================================================
 
 // #define TASK_BENCHMARKING
-
- 
-
-
-
 
 // !!!!!!!!!!!!!=======  DO NOT CHANGE  =======!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // U8G2 CONSTRUCTOR MACROS

@@ -5,6 +5,7 @@
 #include "i2s_in_out.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h" 
+#include "esp_heap_caps.h"
 static const char* TAG = "I2SAUDIO";
 
 /*
@@ -20,7 +21,7 @@ static const char* TAG = "I2SAUDIO";
 */
 
 BUF_TYPE* I2S_Audio::allocateBuffer(const char* name) {
-    BUF_TYPE* buf = (BUF_TYPE*)heap_caps_calloc(16, _buffer_size, _malloc_caps);
+    BUF_TYPE* buf = (BUF_TYPE*) heap_caps_calloc(16, _buffer_size, _malloc_caps | MALLOC_CAP_DMA);
     if (!buf) {
         ESP_LOGE(TAG, "Couldn't allocate memory for %s buffer", name);
     } else {
@@ -38,9 +39,9 @@ void I2S_Audio::init(eI2sMode select_mode) {
 	i2s_mode_t port_mode;
 #else
   #if (CHANNEL_SAMPLE_BYTES == 4)
-	_malloc_caps = ( MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT );
+	_malloc_caps = ( MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT | MALLOC_CAP_DMA  );
   #else
-	_malloc_caps = ( MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT );
+	_malloc_caps = ( MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA  );
   #endif
 #endif  
 
@@ -274,7 +275,7 @@ void I2S_Audio::writeBuffers(float* L, float* R) {
     i2s_channel_write(tx_handle, _output_buf, _buffer_size, &bytes_written, portMAX_DELAY);
 #else
     size_t bytes_written = 0;
-    i2s_write(_i2s_num, _output_buf, _buffer_size, &bytes_written, portMAX_DELAY);
+    i2s_write(_i2s_port, _output_buf, _buffer_size, &bytes_written, portMAX_DELAY);
 #endif
 }
 

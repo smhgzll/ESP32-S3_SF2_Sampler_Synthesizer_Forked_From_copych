@@ -4,13 +4,15 @@
 #include "config.h"
 #include "TextGUI.h"
 #include <FS.h>
-#include <SD_MMC.h>
+#include <SdFat.h>
 #include <LittleFS.h>
-#include "Synth.h"
+#include "synth.h"
 #include "TLVStorage.h"
 #include "fx_reverb.h"
 #include "fx_delay.h"
 #include "fx_chorus.h"
+
+extern SdFs SD;
 
 namespace MenuStructure {
 
@@ -40,6 +42,70 @@ inline bool folderContainsSf2(fs::FS& fs, const String& path) {
         }
     }
     return false;
+}
+
+inline bool folderContainsSf2SdFat(const String& path) {
+    FsFile dir;
+    if (!dir.open(path.c_str())) return false;
+
+    FsFile entry;
+    char nm[128];
+    while (entry.openNext(&dir, O_RDONLY)) {
+        entry.getName(nm, sizeof(nm));
+        String entryName = String(nm);
+
+        String fullPath = entryName.startsWith("/") ? entryName : (String(path) + "/" + entryName);
+        fullPath.replace("//", "/");
+
+        if (entry.isDir()) {
+            entry.close();
+            if (folderContainsSf2SdFat(fullPath)) { dir.close(); return true; }
+        } else {
+            bool ok = endsWithIgnoreCase(entryName, ".sf2");
+            entry.close();
+            if (ok) { dir.close(); return true; }
+        }
+    }
+    dir.close();
+    return false;
+}
+
+static MenuItem createFileBrowserMenuSdFat(Synth& synth, const String& path, FileSystemType type, const String& label) {
+    return MenuItem::Submenu("▶" + label, [=, &synth]() {
+        std::vector<MenuItem> items;
+
+        FsFile dir;
+        if (!dir.open(path.c_str())) return items;
+
+        FsFile entry;
+        char nm[128];
+        while (entry.openNext(&dir, O_RDONLY)) {
+            entry.getName(nm, sizeof(nm));
+            String entryName = String(nm);
+
+            String fullPath = entryName.startsWith("/") ? entryName : (String(path) + "/" + entryName);
+            fullPath.replace("//", "/");
+
+            if (entry.isDir()) {
+                entry.close();
+                if (folderContainsSf2SdFat(fullPath)) {
+                    String lbl = fullPath.substring(fullPath.lastIndexOf("/") + 1);
+                    items.push_back(createFileBrowserMenuSdFat(synth, fullPath, type, lbl));
+                }
+            } else if (endsWithIgnoreCase(entryName, ".sf2")) {
+                items.push_back(MenuItem::Action(entryName, [=, &synth](TextGUI& gui) {
+                    synth.setFileSystem(type);
+                    gui.busyMessage("Loading...");
+                    synth.loadSf2File(fullPath.c_str());
+                }));
+                entry.close();
+            } else {
+                entry.close();
+            }
+        }
+        dir.close();
+        return withFallback(items);
+    });
 }
 
 static MenuItem createFileBrowserMenu(Synth& synth, fs::FS& fs, const String& path, FileSystemType type, const String& label) {
@@ -157,17 +223,16 @@ static MenuItem createProgramMenu(Synth& synth, uint8_t channel) {
 }
 
 
-
 static MenuItem createLoadBankMenu(Synth& synth) {
     return MenuItem::Submenu("Load Bank", [=, &synth]() {
         return std::vector<MenuItem>{
-            createFileBrowserMenu(synth, SD_MMC, "/", FileSystemType::SD, "SD Card"),
+            // SD (SdFat)
+            createFileBrowserMenuSdFat(synth, "/", FileSystemType::SD, "SD Card"),
+            // Internal (LittleFS)
             createFileBrowserMenu(synth, LittleFS, "/", FileSystemType::LITTLEFS, "Internal")
         };
     });
 }
-
-
 
 #ifdef ENABLE_REVERB
 // Reverb Menu (matches your FxReverb implementation)
