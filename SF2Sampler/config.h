@@ -25,8 +25,8 @@
 #pragma once
 
 // ===================== AUDIO ======================================================================================
-#define   DMA_BUFFER_NUM        2     // number of internal DMA buffers
-#define   DMA_BUFFER_LEN        64    // length of each buffer in samples
+#define   DMA_BUFFER_NUM        4     // number of internal DMA buffers
+#define   DMA_BUFFER_LEN        128    // length of each buffer in samples
 #define   CHANNEL_SAMPLE_BYTES  2     // can be 1, 2, 3 or 4 (2 and 4 only supported yet)
 #define   SAMPLE_RATE           44100
 

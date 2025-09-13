@@ -30,6 +30,7 @@
 #include <SD_MMC.h>
 #include <LittleFS.h>
 #include "TLVStorage.h"
+#include <cstring>   // memset
 
 #include <SdFat.h>
 extern SdFs SD;   // main.cpp’de tanıml
@@ -61,6 +62,12 @@ inline int countActiveVoicesFast(const Voice* voices, int max) {
 
 static const char* TAG = "Synth";
 
+// Basit, hızlı yumuşak sınırlayıcı (tanh benzeri)
+static inline float soft_clip(float x) {
+    float x2 = x * x;
+    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+}
+
 Synth::Synth(SF2Parser& parserRef) : parser(parserRef) {
     // Initialize all 16 MIDI channels with default values
     for (int i = 0; i < 16; ++i) {
@@ -72,7 +79,7 @@ Synth::Synth(SF2Parser& parserRef) : parser(parserRef) {
         voices[i].init();
     }
 
-    volume_scaler = 1.0f / sqrtf(MAX_VOICES);
+    volume_scaler = 0.85f / sqrtf(MAX_VOICES);
 }
 
 bool Synth::begin() {
@@ -425,9 +432,9 @@ void Synth::programChange(uint8_t ch, uint8_t program) {
 
 // Inline filter processing to reduce function call overhead
 #define PROCESS_FILTER_LR(flt, inL, inR) { \
-    float tmpL = inL, tmpR = inR;         \
-    flt.processLR(&tmpL, &tmpR);         \
-    inL = tmpL; inR = tmpR;              \
+    float tmpL = inL, tmpR = inR;          \
+    flt.processLR(&tmpL, &tmpR);           \
+    inL = tmpL; inR = tmpR;                \
 }
 
 
@@ -456,8 +463,9 @@ void   __attribute__((hot,always_inline)) IRAM_ATTR Synth::renderLRBlock(float* 
         Voice& voice = voices[v];
         if (!voice.active) continue;
 
-        float volL = volume_scaler * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panL;
-        float volR = volume_scaler * (*voice.modVolume) * (*voice.modExpression) * voice.velocityVolume * voice.panR;
+        // Çifte gain’i önlemek için sadece pan + global scaler
+        float volL = volume_scaler * voice.panL;
+        float volR = volume_scaler * voice.panR;
 
 #ifdef ENABLE_CHORUS
         float cAmt = voice.chorusAmount;
@@ -493,7 +501,7 @@ void   __attribute__((hot,always_inline)) IRAM_ATTR Synth::renderLRBlock(float* 
 #endif
 
         for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
-            float smp = voice.nextSample();
+            float smp = voice.nextSample();   // ZATEN vel * volume * expression * env içerir
 
             float l = smp * volL;
             float r = smp * volR;
@@ -553,18 +561,34 @@ void   __attribute__((hot,always_inline)) IRAM_ATTR Synth::renderLRBlock(float* 
     reverb.processBlock(revL, revR);
 #endif
 
+    // --- MASTER HEADROOM + SOFT LIMITER ---
+    const float MASTER_GAIN = 0.30f;  // 0.25–0.35 arası denenebilir
+
     for (int i = 0; i < DMA_BUFFER_LEN; ++i) {
-        outL[i] = dryL[i];
-        outR[i] = dryR[i];
+        float l = dryL[i];
+        float r = dryR[i];
 #ifdef ENABLE_CHORUS
-        outL[i] += choL[i]; outR[i] += choR[i];
+        l += choL[i]; r += choR[i];
 #endif
 #ifdef ENABLE_REVERB
-        outL[i] += revL[i]; outR[i] += revR[i];
+        l += revL[i]; r += revR[i];
 #endif
 #ifdef ENABLE_DELAY
-        outL[i] += delL[i]; outR[i] += delR[i];
+        l += delL[i]; r += delR[i];
 #endif
+
+        l *= MASTER_GAIN;
+        r *= MASTER_GAIN;
+
+        l = soft_clip(l);
+        r = soft_clip(r);
+
+        // Emniyet clamp
+        if (l > 0.999f) l = 0.999f; else if (l < -0.999f) l = -0.999f;
+        if (r > 0.999f) r = 0.999f; else if (r < -0.999f) r = -0.999f;
+
+        outL[i] = l;
+        outR[i] = r;
     }
 }
 
@@ -615,6 +639,7 @@ Voice* Synth::findWorstVoice() {
 }
 
 void Synth::updateScores() {
+    // Audio thread dışı: yalnızca skor güncelle
     for (Voice& v : voices) {
         v.updateScore();
         if (!v.active) continue;

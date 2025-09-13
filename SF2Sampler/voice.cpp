@@ -1,7 +1,7 @@
 /*
  * ----------------------------------------------------------------------------
  * ESP32-S3 SF2 Synthesizer Firmware
- * 
+ *
  * Description:
  *   Real-time SF2 (SoundFont) compatible wavetable synthesizer with USB MIDI, I2S audio,
  *   multi-layer voice allocation, per-channel filters, reverb, chorus and delay.
@@ -20,83 +20,120 @@
  * File: voice.cpp
  * Purpose: Voice generation routines
  * ----------------------------------------------------------------------------
+ *
+ * NOT: voice.h içinde `updatePitchFactors()` SADECE deklare edilmiş olmalı
+ * (inline gövde olursa "redefinition" hatası alırsın).
  */
-
 
 #include "voice.h"
 #include "misc.h"
-
+#include <math.h>
 #include <esp_dsp.h>
 
 static const char* TAG = "Voice";
 
-inline float velocityToGain(uint32_t velocity) {
-    //    return velocity * velocity * DIV_127 * DIV_127; // square velocity 
-    return velocity * DIV_127; // linear velocity
-    //return powf(velocity, 0.6f); // 0.6 = 60% powerlaw, approximating sqrt()
+#ifndef HOT
+  #define HOT __attribute__((hot))
+#endif
+#ifndef FORCE_INLINE
+  #define FORCE_INLINE __attribute__((always_inline)) inline
+#endif
+#ifndef LIKELY
+  #define LIKELY(x)   __builtin_expect(!!(x), 1)
+#endif
+#ifndef UNLIKELY
+  #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
+// 1: LFO/portamento'yu her örnekte (nextSample sonunda) ilerlet
+// 0: Blok sonunda (Synth::renderLRBlock içinde) ilerlet
+#ifndef PITCH_FACTORS_PER_SAMPLE
+  #define PITCH_FACTORS_PER_SAMPLE 0
+#endif
+
+static FORCE_INLINE float velocityToGain(uint32_t velocity) {
+    return velocity * DIV_127;           // ucuz ve yeterli (lineer)
+    // alternatifler:
+    // return velocity * velocity * DIV_127 * DIV_127;
+    // return powf(velocity, 0.6f);
 }
 
-
-
 void Voice::prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan) {
-    zone = z;
+    zone   = z;
     sample = zone.sample;
-    data = reinterpret_cast<int16_t*>(__builtin_assume_aligned(sample->data, 4));
 
-    int startNote = chan->portaCurrentNote;
+    // Parser sample->data'yı sample->start'a göre hizalı veriyor → ekstra offsetleme yok.
+    data = reinterpret_cast<const int16_t*>(__builtin_assume_aligned(sample->data, 4));
 
-    note = note_;
-    velocity = vel;
-    channel = ch;
-    forward = true;
-    phase = 1.0f; // interpolation uses -1, so first will be 0 and branchless
-    noteHeld = true;
-    samplesRun = lastSamplesRun = 0;
+    const int startNote = chan->portaCurrentNote;
+
+    note        = note_;
+    velocity    = vel;
+    channel     = ch;
+    forward     = true;
+
+    // İlk örnekte s0 = data[0] okunabilsin diye 1.0f'tan başlıyoruz (branchless)
+    phase       = 1.0f;
+
+    noteHeld    = true;
+    samplesRun  = 0;
+    lastSamplesRun = 0;
     exclusiveClass = zone.exclusiveClass;
 
-    modWheel = &chan->modWheel;
-    modVolume = &chan->volume;
-    modExpression = &chan->expression;
-    modPitchBendFactor = &chan->pitchBendFactor;
-    modPan = &chan->pan;
-    modSustain = &chan->sustainPedal;
-    modPortaTime = &chan->portaTime;
-    modPortamento = &chan->portamento;
- 
+    // Mod kaynak pointer'ları (hot-path'te kopya yok)
+    modWheel            = &chan->modWheel;
+    modVolume           = &chan->volume;
+    modExpression       = &chan->expression;
+    modPitchBendFactor  = &chan->pitchBendFactor;
+    modPan              = &chan->pan;
+    modSustain          = &chan->sustainPedal;
+    modPortaTime        = &chan->portaTime;
+    modPortamento       = &chan->portamento;
+
+#ifdef ENABLE_CH_FILTER_M
     chFilter.setCoeffs(&chan->filterCoeffs);
     chFilter.resetState();
+#endif
 
     velocityVolume = velocityToGain(velocity) * zone.attenuation;
 
-    float modEnvStaticTune = (zone.modAttackTime < 1.0f) ?
-        (1.0f - zone.modSustainLevel) * zone.modEnvToPitch * 0.01f : 0.0f;
+    // Statik mod-env pitch katkısı (başlangıçta)
+    const float modEnvStaticTune =
+        (zone.modAttackTime < 1.0f)
+            ? (1.0f - zone.modSustainLevel) * zone.modEnvToPitch * 0.01f
+            : 0.0f;
 
-    int rootKey = (zone.rootKey >= 0) ? zone.rootKey : sample->originalPitch;
-    float semi = float(note_ - rootKey) + (sample->pitchCorrection * 0.01f) + zone.coarseTune + zone.fineTune + chan->tuningSemitones;
-    float noteRatio = exp2f((modEnvStaticTune + semi) * DIV_12);
-    float baseStep = float(sample->sampleRate) * DIV_SAMPLE_RATE;
-    basePhaseIncrement = baseStep * noteRatio;
+    const int   rootKey   = (zone.rootKey >= 0) ? zone.rootKey : sample->originalPitch;
+    const float semi      = float(note_ - rootKey)
+                          + (sample->pitchCorrection * 0.01f)
+                          + zone.coarseTune + zone.fineTune
+                          + chan->tuningSemitones;
+    const float noteRatio = exp2f((modEnvStaticTune + semi) * DIV_12);
+    const float baseStep  = float(sample->sampleRate) * DIV_SAMPLE_RATE;
+    basePhaseIncrement    = baseStep * noteRatio;   // pitch bend / LFO / porta ile güncellenecek
 
-    vibLfoPhase = 0.0f;
+    // Vibrato LFO
+    vibLfoPhase          = 0.0f;
     vibLfoPhaseIncrement = zone.vibLfoFreq * DIV_SAMPLE_RATE;
-    vibLfoToPitch = (zone.vibLfoToPitch == 0.0f) ? 50.0f : zone.vibLfoToPitch;
-    vibLfoDelaySamples = zone.vibLfoDelay * SAMPLE_RATE;
-    vibLfoCounter = 0;
-    vibLfoActive = false;
+    vibLfoToPitch        = (zone.vibLfoToPitch == 0.0f) ? 50.0f : zone.vibLfoToPitch;
+    vibLfoDelaySamples   = zone.vibLfoDelay * SAMPLE_RATE;
+    vibLfoCounter        = 0;
+    vibLfoActive         = false;
+    pitchMod             = 1.0f;
 
-    portamentoActive = modPortamento && *modPortamento;
+    // Portamento (log-domain step tanımı)
+    portamentoActive = (modPortamento && *modPortamento);
     if (portamentoActive) {
-        float noteDiff = float(note_ - startNote);
-        float freqRatio = exp2f(noteDiff * DIV_12);
-        float timeSec = 0.01f + (*modPortaTime) * 0.5f;
-        float totalSamples = timeSec * SAMPLE_RATE;
-        currentPhaseIncrement = basePhaseIncrement / freqRatio;
-        portamentoFactor = 1.0f / freqRatio;
-        portamentoLogDelta = exp2f(log2f(freqRatio) / totalSamples);
+        const float noteDiff     = float(note_ - startNote);
+        const float freqRatio    = exp2f(noteDiff * DIV_12);
+        const float timeSec      = 0.01f + (*modPortaTime) * 0.5f;
+        const float totalSamples = fmaxf(1.0f, timeSec * SAMPLE_RATE);
+
+        portamentoLogDelta   = exp2f(log2f(freqRatio) / totalSamples);   // örnek başına çarpan tabanı
+        portamentoFactor     = 1.0f / freqRatio;                         // önceki sesten başla
     } else {
-        currentPhaseIncrement = basePhaseIncrement;
         portamentoLogDelta = 1.0f;
-        portamentoFactor = 1.0f;
+        portamentoFactor   = 1.0f;
     }
 
     updatePitch();
@@ -105,38 +142,33 @@ void Voice::prepareStart(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, 
     reverbAmount = zone.reverbSend * chan->reverbSend;
     chorusAmount = zone.chorusSend * chan->chorusSend;
 
-    ampEnv.setAttackTime(zone.attackTime * chan->attackModifier);
-    ampEnv.setDecayTime(zone.decayTime);
-    ampEnv.setHoldTime(zone.holdTime);
+    // Envelope
+    ampEnv.setAttackTime (zone.attackTime  * chan->attackModifier);
+    ampEnv.setDecayTime  (zone.decayTime);
+    ampEnv.setHoldTime   (zone.holdTime);
     ampEnv.setSustainLevel(zone.sustainLevel);
     ampEnv.setReleaseTime(zone.releaseTime * chan->releaseModifier);
 
-    int32_t loopStartOffset = zone.loopStartOffset + (zone.loopStartCoarseOffset << 15);
-    int32_t loopEndOffset = zone.loopEndOffset + (zone.loopEndCoarseOffset << 15);
-    length = sample->end - sample->start;
-    loopStart = sample->startLoop + loopStartOffset - sample->start;
-    loopEnd = sample->endLoop + loopEndOffset - sample->start;
+    // Döngü bilgileri (phase ile aynı referans: sample->start)
+    const int32_t loopStartOffset = zone.loopStartOffset + (zone.loopStartCoarseOffset << 15);
+    const int32_t loopEndOffset   = zone.loopEndOffset   + (zone.loopEndCoarseOffset   << 15);
+    length     = sample->end - sample->start;
+    loopStart  = sample->startLoop + loopStartOffset - sample->start;
+    loopEnd    = sample->endLoop   + loopEndOffset   - sample->start;
     loopLength = loopEnd - loopStart;
-    loopType = static_cast<LoopType>(zone.sampleModes & 0x0003);
+    loopType   = static_cast<LoopType>(zone.sampleModes & 0x0003);
     if (loopType == UNUSED || loopStart < 0 || loopEnd > length || loopLength <= 0) {
         loopType = NO_LOOP;
     }
 
 #ifdef ENABLE_IN_VOICE_FILTERS
-    filterCutoff = fclamp(zone.filterFc, 10.0f, 20000.0f);
+    filterCutoff    = fclamp(zone.filterFc, 10.0f, 20000.0f);
     filterResonance = (zone.filterQ <= 0.0f) ? 0.707f : 1.0f / powf(10.0f, zone.filterQ / 20.0f);
     filter.resetState();
     filter.setFreqAndQ(filterCutoff, filterResonance);
 #endif
 
-    ESP_LOGD(TAG, "ch=%d note=%d atk=%.5f hld=%.5f dcy=%.5f sus=%.3f rel=%.5f loopStart=%u loopEnd=%u loopType=%d",
-        channel, note, zone.attackTime, zone.holdTime, zone.decayTime, zone.sustainLevel, zone.releaseTime,
-        static_cast<uint32_t>(loopStart), static_cast<uint32_t>(loopEnd), loopType);
-
-    //ESP_LOGD(TAG, "ch=%d reverb=%.5f chorus=%.5f delay=%.5f", channel, reverbAmount, chorusAmount, ch->delaySend);
-
-    ESP_LOGD(TAG, "modToPitch=%.3f modEnvSustain=%.5f coarseTune=%.3f fineTune=%.3f", zone.modEnvToPitch, zone.modSustainLevel, zone.coarseTune, zone.fineTune);
-
+    envLast = 0.0f; // skor için cache
 }
 
 void Voice::startNew(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, ChannelState* chan) {
@@ -145,38 +177,33 @@ void Voice::startNew(uint8_t ch, uint8_t note_, uint8_t vel, const Zone& z, Chan
     active = true;
 }
 
+void Voice::updatePitchOnly(uint8_t newNote, ChannelState* chan) {
+    const int   rootKey   = (zone.rootKey >= 0) ? zone.rootKey : sample->originalPitch;
+    const float semi      = float(newNote - rootKey)
+                          + (sample->pitchCorrection * 0.01f)
+                          + zone.coarseTune + zone.fineTune;
+    const float noteRatio = exp2f(semi * DIV_12);
+    basePhaseIncrement    = float(sample->sampleRate) * DIV_SAMPLE_RATE * noteRatio;
 
-void Voice::updatePitchOnly(uint8_t newNote, ChannelState* chan) {    
-    int rootKey = (zone.rootKey >= 0) ? zone.rootKey : sample->originalPitch;
-    float semi = float(newNote - rootKey) + (sample->pitchCorrection * 0.01f) + zone.coarseTune + zone.fineTune;
-    float noteRatio = exp2f(semi * DIV_12);
-    basePhaseIncrement = float(sample->sampleRate) * DIV_SAMPLE_RATE * noteRatio;
-
-    portamentoActive = modPortamento && *modPortamento; 
+    portamentoActive = (modPortamento && *modPortamento);
     if (portamentoActive) {
-        float noteDiff = float(newNote - chan->portaCurrentNote);
-        float freqRatio = exp2f(noteDiff * DIV_12);
-        float timeSec = 0.01f + (*modPortaTime) * 0.5f;
-        float totalSamples = timeSec * SAMPLE_RATE;
-       // currentPhaseIncrement = basePhaseIncrement / freqRatio;
-        portamentoFactor = 1.0f / freqRatio;
-        portamentoLogDelta = exp2f(log2f(freqRatio) / totalSamples);
+        const float noteDiff     = float(newNote - chan->portaCurrentNote);
+        const float freqRatio    = exp2f(noteDiff * DIV_12);
+        const float timeSec      = 0.01f + (*modPortaTime) * 0.5f;
+        const float totalSamples = fmaxf(1.0f, timeSec * SAMPLE_RATE);
+        portamentoLogDelta       = exp2f(log2f(freqRatio) / totalSamples);
+        // portamentoFactor ses iş parçacığında 1.0'a yürüyecek
     } else {
-        currentPhaseIncrement = basePhaseIncrement;
-        portamentoFactor = 1.0f;
+        portamentoFactor   = 1.0f;
         portamentoLogDelta = 1.0f;
     }
 
     note = newNote;
-    
     updatePitch();
-    ESP_LOGD(TAG, "Pitch recalc v_id %d portaFactor %.5f", id, portamentoFactor);
 }
 
-
-
 void Voice::stop() {
-    if (!(modSustain && *modSustain) ) {
+    if (!(modSustain && *modSustain)) {
         noteHeld = false;
         ampEnv.end(Adsr::END_REGULAR);
     }
@@ -197,107 +224,110 @@ bool Voice::isRunning() const {
     return ampEnv.isRunning();
 }
 
-float __attribute__((hot,always_inline)) IRAM_ATTR Voice::nextSample() {
-    if (!sample) {
+// ---- HOT PATH: tek örnek üretimi ----
+float HOT IRAM_ATTR Voice::nextSample() {
+    if (UNLIKELY(!sample)) {
         active = false;
         return 0.0f;
     }
 
-    updatePitch();
-    
-    // for syncing time-based functions (like LFOs)
-    samplesRun++;
-    
-    // Sample fetch + linear interpolation (unrolled and minimal branching)
-    uint32_t idx = (uint32_t)phase;
-    float frac = phase - (float)idx;
+    // Bu örnek sabit increment ile üretilecek
+    //updatePitch();
 
-    // float s0 = data[(idx > 0) ? (idx - 1) : 0];
-    // phase[0] = 1.0, so never <= 0, cons: we never get clean 1st sample, pros: it's branchless
-    float s0 = data[idx - 1];
-    float s1 = data[idx];
+    // Örneği ürettikten sonra zaman tabanını ilerleteceğiz (aşağıda)
+    // -> jitter/metalik bozulmayı önler
 
-    // smp = (s0 + frac * (s1 - s0)) * ONE_DIV_32768;
-    float interp = __builtin_fmaf((s1 - s0), frac, s0);  // s0 + (s1 - s0) * frac
-    float smp = interp * ONE_DIV_32768;
+    // Örnek alma + lineer enterpolasyon (güvenli)
+    const uint32_t idx  = (uint32_t)phase;
+    if (UNLIKELY(idx >= (uint32_t)length)) {   // emniyet
+        active = false;
+        return 0.0f;
+    }
 
-    // Envelope process
-    float env = ampEnv.process();
+    const float frac = phase - (float)idx;
+    const uint32_t i0 = (idx > 0u) ? (idx - 1u) : 0u;
+
+    const float s0 = (float)data[i0];
+    const float s1 = (float)data[idx];
+    const float interp = s0 + (s1 - s0) * frac;
+    const float smp    = interp * ONE_DIV_32768;
+
+    // Envelope sadece audio thread'de ilerler
+    const float env = ampEnv.process();
+    envLast         = env;
+
     float val = smp * velocityVolume * env * (*modVolume) * (*modExpression);
 
 #ifdef ENABLE_IN_VOICE_FILTERS
     val = filter.process(val);
 #endif
-
 #ifdef ENABLE_CH_FILTER_M
     val = chFilter.process(val);
 #endif
 
-    // Fused phase advance, wrapping, voice lifetime control
+    // Faz/döngü
     switch (loopType) {
         case FORWARD_LOOP:
             phase += effectivePhaseIncrement;
-            if (phase >= loopEnd) phase -= loopLength;
+            if (UNLIKELY(phase >= loopEnd)) phase -= loopLength;
             break;
 
         case SUSTAIN_LOOP:
             phase += effectivePhaseIncrement;
-            //if (ampEnv.getCurrentSegment() != Adsr::ADSR_SEG_RELEASE) {
             if (noteHeld) {
-                if (phase >= loopEnd)
-                    phase -= loopLength;
+                if (UNLIKELY(phase >= loopEnd)) phase -= loopLength;
             } else {
-              loopType = NO_LOOP; // switch to a simplier route
-              if (phase >= length) {
-                  active = false;
-                  return 0.0f;
-              }
+                loopType = NO_LOOP;
+                if (UNLIKELY(phase >= length)) { active = false; return 0.0f; }
             }
             break;
 
         case PING_PONG_LOOP:
             if (forward) {
                 phase += effectivePhaseIncrement;
-                if (phase >= loopEnd) {
-                    phase = 2.0f * loopEnd - phase; // reflect back
+                if (UNLIKELY(phase >= loopEnd)) {
+                    phase   = 2.0f * loopEnd - phase;
                     forward = false;
                 }
             } else {
                 phase -= effectivePhaseIncrement;
-                if (phase <= loopStart) {
-                    phase = 2.0f * loopStart - phase; // reflect forward
+                if (UNLIKELY(phase <= loopStart)) {
+                    phase   = 2.0f * loopStart - phase;
                     forward = true;
                 }
             }
-            break; 
+            break;
 
         case NO_LOOP:
         default:
             phase += effectivePhaseIncrement;
-            if (phase >= length) {
-                active = false;
-                return 0.0f;
-            }
+            if (UNLIKELY(phase >= length)) { active = false; return 0.0f; }
             break;
     }
 
-    if (ampEnv.isIdle()) {
+    if (UNLIKELY(ampEnv.isIdle())) {
         active = false;
         return 0.0f;
     }
-    
-    return val;
 
+    // Zaman sayaçları: SONDA (bir sonraki örnek için)
+    samplesRun++;
+#if PITCH_FACTORS_PER_SAMPLE
+    updatePitchFactors();   // vibrato/porta ilerlemesi burada → stabil ses
+#endif
+
+    return val;
 }
 
 void Voice::renderBlock(float* block) {
-    for (uint32_t i = 0; i < DMA_BUFFER_LEN; i++) {
-        block[i] = nextSample() ;
+    for (uint32_t i = 0; i < DMA_BUFFER_LEN; ++i) {
+        block[i] = nextSample();
     }
 }
 
+// RT dışı: skor (envelope ilerletmez)
 void Voice::updateScore() {
-    if (!active || !sample) {
+    if (UNLIKELY(!active || !sample)) {
         score = 0.0f;
         return;
     }
@@ -351,11 +381,12 @@ void __attribute__((always_inline))  Voice::updatePitchFactors() {
 
 
 void Voice::init() {
-    active = false;
-    panL = 1.0f;
-    panR = 1.0f;
+    active         = false;
+    panL           = 1.0f;
+    panR           = 1.0f;
     velocityVolume = 1.0f;
-    sample = nullptr;
+    sample         = nullptr;
+    envLast        = 0.0f;
     ampEnv.init(SAMPLE_RATE);
     id = usage;
     usage++;
@@ -363,5 +394,5 @@ void Voice::init() {
 }
 
 void Voice::printState() {
-    ESP_LOGI(TAG, "id=%d seg=%s val=%.5f", id, ampEnv.getCurrentSegmentStr(), ampEnv.getVal() );
+    ESP_LOGI(TAG, "id=%d seg=%s val=%.5f", id, ampEnv.getCurrentSegmentStr(), ampEnv.getVal());
 }

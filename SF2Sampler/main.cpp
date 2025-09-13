@@ -71,10 +71,21 @@ SdFs SD;
 
 bool g_audio_ok = false;
 
-// tasks for Core0 and Core1
+// tasks for Core0 and Core1 (statik)
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 TaskHandle_t Task3;
+static StaticTask_t audio_tcb;
+static StaticTask_t control_tcb;
+#ifdef ENABLE_GUI
+static StaticTask_t gui_tcb;
+#endif
+// Stack'leri internal RAM'de tut (boyutları projene göre ayarla)
+static StackType_t  audio_stack[8192/sizeof(StackType_t)]  DRAM_ATTR;
+static StackType_t  control_stack[8192/sizeof(StackType_t)] DRAM_ATTR;
+#ifdef ENABLE_GUI
+static StackType_t  gui_stack[5000/sizeof(StackType_t)]    DRAM_ATTR;
+#endif
 
 int Voice::usage; // counts voices internally
 
@@ -217,13 +228,13 @@ static void IRAM_ATTR audio_task(void *userData) {
 static void IRAM_ATTR control_task(void *userData) { 
     vTaskDelay(50);
     ESP_LOGI(TAG, "Starting Task2");
+    TickType_t last = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(1); // 1ms kontrol periyodu (gerekirse 2–5ms)
     
-    while (true) { 
-        //for (int k = 0; k < 8 && MIDI.read(); ++k) { /* drain MIDI */ }
-        MIDI.read();
+    for (;;) {
+        for (int k = 0; k < 64 && MIDI.read(); ++k) { /* drain MIDI */ }
+        // MIDI.read();
         synth.updateScores();
-        vTaskDelay(1); 
-        taskYIELD();
 
 #ifdef ENABLE_GUI
         if (__builtin_expect((gui_blocker == 0), 1)) {
@@ -254,6 +265,8 @@ static void IRAM_ATTR control_task(void *userData) {
             synth.updateActivity();
             frame_count  = 0;
         }
+
+        vTaskDelayUntil(&last, period);
     }
 }
 
@@ -275,7 +288,7 @@ static void IRAM_ATTR gui_task(void *userData) {
 
 // ========================== SETUP ===============================================================================================
 void setup() {
-    //lockCpu240();
+    lockCpu240();
     if (!psramFound()) {
       ESP_LOGE(TAG, "PSRAM not found!");
       vTaskDelay(10);
@@ -353,10 +366,25 @@ void setup() {
     ESP_LOGI(TAG, "RGB LED started");
 #endif
 
-    xTaskCreatePinnedToCore(audio_task,   "SynthTask",   8192, NULL, 8, &Task1, 1); // Core1
-    xTaskCreatePinnedToCore(control_task, "ControlTask", 8192, NULL,  8, &Task2, 0); // Core0
+    Task1 = xTaskCreateStaticPinnedToCore(
+        audio_task, "SynthTask",
+        sizeof(audio_stack)/sizeof(StackType_t),
+        nullptr, 11, audio_stack, &audio_tcb, 1); // Core1, prio 11
+   
+    Task2 = xTaskCreateStaticPinnedToCore(
+        control_task, "ControlTask",
+        sizeof(control_stack)/sizeof(StackType_t),
+        nullptr, 6, control_stack, &control_tcb, 0); // Core0, prio 6
+
+    // xTaskCreatePinnedToCore(audio_task,   "SynthTask",   8192, NULL, 11, &Task1, 1); // Core1
+    // xTaskCreatePinnedToCore(control_task, "ControlTask", 8192, NULL,  8, &Task2, 0); // Core0
 #ifdef ENABLE_GUI
-    xTaskCreatePinnedToCore(gui_task,     "GUITask",     5000, NULL,  5, &Task3, 1);
+    Task3 = xTaskCreateStaticPinnedToCore(
+        gui_task, "GUITask",
+        sizeof(gui_stack)/sizeof(StackType_t),
+        nullptr, 3, gui_stack, &gui_tcb, 0); // Core0, prio 3
+
+    // xTaskCreatePinnedToCore(gui_task,     "GUITask",     5000, NULL,  3, &Task3, 0);
 #endif
 
     vTaskDelay(30);
